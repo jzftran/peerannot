@@ -5,7 +5,6 @@ import torch
 from pathlib import Path
 from torch.utils.data import Subset
 from tqdm.auto import tqdm
-from torchvision import transforms
 import numpy as np
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

@@ -1,6 +1,5 @@
 import click
 import json
-import sys
 from pathlib import Path
 import os
 import numpy as np
@@ -230,18 +229,18 @@ class CustomDataset:
             with open(metadata, "r") as f:
                 metadata = json.load(f)
 
-            if not "name" in metadata.keys():
+            if "name" not in metadata.keys():
                 metadata["name"] = datetime.today().strftime("%Y-%m-%d %H:%M:%S")
 
-            if not "n_classes" in metadata.keys():
+            if "n_classes" not in metadata.keys():
                 metadata["n_classes"] = len(label_namesTab)
 
-            if not "n_workers" in metadata.keys():
+            if "n_workers" not in metadata.keys():
                 metadata["n_workers"] = (
                     self.numberWorkers(Path("./answers.json"))[-1] + 1
                 )
 
-            if not "nb_workers" in metadata.keys():
+            if "nb_workers" not in metadata.keys():
                 metadata["nb_workers"] = len(self.numberWorkers(Path("./answers.json")))
 
             with open("./metadata.json", "w") as answ:

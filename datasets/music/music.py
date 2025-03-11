@@ -39,9 +39,7 @@ class Music:
             zip_ref.extractall(self.DIR / "downloads")
 
         self.DIRimages = self.DIR / "downloads" / "Data" / "images_original"
-        self.DIRturk = (
-            self.DIR / "downloads" / "mturk" / "music_genre_classification"
-        )
+        self.DIRturk = self.DIR / "downloads" / "mturk" / "music_genre_classification"
 
     def setfolders(self):
         print(f"Loading data folders at {self.DIR}")
@@ -69,9 +67,7 @@ class Music:
             genre = row["class"]
             id_ = row["id"]
             file = (
-                self.DIRimages
-                / genre
-                / id_.replace(".", "", 1).replace("mp3", "png")
+                self.DIRimages / genre / id_.replace(".", "", 1).replace("mp3", "png")
             )
             self.task_conv[file.stem] = index
             file.rename(dst_dir / genre / f"{file.stem}-{index}.png")
@@ -80,9 +76,7 @@ class Music:
             genre = row["class"]
             id_ = row["id"]
             file = (
-                self.DIRimages
-                / genre
-                / id_.replace(".", "", 1).replace("mp3", "png")
+                self.DIRimages / genre / id_.replace(".", "", 1).replace("mp3", "png")
             )
             if file.name == "jazz00054.png":
                 # jazz00054 is known to be a corrupt wav file and thus is not translated as image : https://www.kaggle.com/datasets/andradaolteanu/gtzan-dataset-music-genre-classification/discussion/158649
@@ -123,9 +117,7 @@ class Music:
             if not res_train.get(self.task_conv[Path(file).stem], None):
                 res_train[self.task_conv[Path(file).stem]] = {}
 
-            res_train[self.task_conv[Path(file).stem]][
-                worker_conv[worker]
-            ] = lab
+            res_train[self.task_conv[Path(file).stem]][worker_conv[worker]] = lab
 
         with open(self.DIR / "answers.json", "w") as answ:
             json.dump(res_train, answ, ensure_ascii=False, indent=3)

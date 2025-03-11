@@ -59,9 +59,7 @@ def networks(
     torch_models = get_all_models()
     if name in torch_models and (name not in ["modellabelme", "modelmusic"]):
         if pretrained:
-            weights = torch.hub.load(
-                "pytorch/vision", "get_model_weights", name=name
-            )
+            weights = torch.hub.load("pytorch/vision", "get_model_weights", name=name)
             weight = [weight for weight in weights][-1]
         else:
             weight = None
@@ -81,9 +79,7 @@ def networks(
 
     elif "vgg" in name:
         if model.classifier[6].out_features != n_classes:
-            model.classifier[6] = nn.Linear(
-                model.classifier[6].in_features, n_classes
-            )
+            model.classifier[6] = nn.Linear(model.classifier[6].in_features, n_classes)
         if freeze:
             for parameter in model.parameters():
                 parameter.requires_grad = False
@@ -91,9 +87,7 @@ def networks(
                 param.requires_grad = True
     elif "vit" in name:
         if model.heads.head.out_features != n_classes:
-            model.heads.head = nn.Linear(
-                model.heads.head.in_features, n_classes
-            )
+            model.heads.head = nn.Linear(model.heads.head.in_features, n_classes)
         if freeze:
             for parameter in model.parameters():
                 parameter.requires_grad = False
@@ -107,8 +101,6 @@ def networks(
         print(f"\t with weights {weight}")
     if name.startswith("resnet") and cifar:
         print("Removing initial downsampling")
-        model.conv1 = nn.Conv2d(
-            3, 64, kernel_size=3, stride=1, padding=3, bias=False
-        )
+        model.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=3, bias=False)
         model.maxpool = nn.Identity()  # avoid hard downsampling
     return model

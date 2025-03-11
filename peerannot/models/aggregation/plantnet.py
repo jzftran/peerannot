@@ -1,9 +1,11 @@
-from ..template import CrowdModel
-import numpy as np
+import json
 import warnings
 from pathlib import Path
-import json
+
+import numpy as np
 from tqdm.auto import tqdm
+
+from ..template import CrowdModel
 
 THETACONF = 2
 THETAACC = 0.7
@@ -15,7 +17,9 @@ class PlantNet(CrowdModel):
     PlantNet aggregation strategy
     ===================================
 
-    Weighted majority vote based on the number of identified classes (species) per worker. Each task if either valid (:math:`s_i=1` or not) if the confidence and accuracy in the estimated label are above the set thresholds.
+    Weighted majority vote based on the number of identified
+    classes (species) per worker. Each task if either valid (:math:`s_i=1` or not)
+    if the confidence and accuracy in the estimated label are above the set thresholds.
     """
 
     def __init__(
@@ -32,7 +36,7 @@ class PlantNet(CrowdModel):
         threshold_scores=None,  # threshold for scores
         **kwargs,
     ):
-        """Compute a weighted majority vote based on the number of identified classes (species) per worker
+        r"""Compute a weighted majority vote based on the number of identified classes (species) per worker
 
         :param answers: Dictionary of workers answers with format
 
@@ -113,13 +117,13 @@ class PlantNet(CrowdModel):
                     k: v for k, v in self.answers[task].items() if k != "AI"
                 }
             self.ans_ai = ans_ai
-            with open(scores, "r") as f:
+            with open(scores) as f:
                 self.scores = json.load(f)
             self.scores = np.array(list(self.scores.values()))
             self.scores_threshold = threshold_scores
         else:
             raise ValueError(
-                f"Option {self.AI} should be one of worker, fixed, invalidating, confident or ignored"
+                f"Option {self.AI} should be one of worker, fixed, invalidating, confident or ignored",
             )
         self.n_classes = n_classes
         self.authors = authors
@@ -127,11 +131,11 @@ class PlantNet(CrowdModel):
             self.authors = -np.ones(len(self.answers), dtype=int)
         else:
             self.authors = np.loadtxt(self.authors, dtype=int)
-        if kwargs.get("dataset", None):
+        if kwargs.get("dataset"):
             self.path_save = Path(kwargs["dataset"]) / "identification" / "plantnet"
         else:
             self.path_save = None
-        if kwargs.get("path_remove", None):
+        if kwargs.get("path_remove"):
             to_remove = np.loadtxt(kwargs["path_remove"], dtype=int)
             self.answers_modif = {}
             i = 0
@@ -140,15 +144,6 @@ class PlantNet(CrowdModel):
                     self.answers_modif[i] = val
                     i += 1
             self.answers = self.answers_modif
-
-    def get_probas(self):
-        warnings.warn(
-            """
-            PlantNet agreement only returns hard labels.
-            Defaulting to `get_answers()`.
-            """
-        )
-        return self.get_answers()
 
     def get_wmv(self, weights):
         """Compute weighted majority vote
@@ -174,7 +169,6 @@ class PlantNet(CrowdModel):
             :return: Most weighted label
             :rtype: int
             """
-
             init = calculate_init()
             if (
                 self.AI == "fixed"
@@ -294,7 +288,7 @@ class PlantNet(CrowdModel):
                             taxa_votes[int(worker)] += 1 / 10
                             dico_labs_workers[int(worker)][lab_worker] = 1
         self.n_j = np.array(
-            [taxa_obs[w] + np.round(taxa_votes[w]) for w in range(self.n_workers)]
+            [taxa_obs[w] + np.round(taxa_votes[w]) for w in range(self.n_workers)],
         )
 
     def run(self, maxiter=100, epsilon=1e-5):  # epsilon = diff in weights
@@ -330,8 +324,7 @@ class PlantNet(CrowdModel):
         self.acc = acc
 
     def get_answers(self):
-        """
-        :return: Hard labels and None when no consensus is reached
+        """:return: Hard labels and None when no consensus is reached
         :rtype: numpy.ndarray
         """
         ans = self.labels_hat
@@ -351,6 +344,6 @@ class PlantNet(CrowdModel):
             """
             PlantNet agreement only returns hard labels.
             Defaulting to `get_answers()`.
-            """
+            """,
         )
         return self.get_answers()

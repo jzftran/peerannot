@@ -1,7 +1,6 @@
 # based on https://benchopt.github.io CLI
 import click
 from pathlib import Path
-import numpy as np
 import importlib.util
 import inspect
 import sys

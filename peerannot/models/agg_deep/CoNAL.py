@@ -1,16 +1,11 @@
 import torch
 from torch import nn
 import numpy as np
-from torchvision import transforms
-import torch.nn.functional as F
-import torch.nn as nn
 from collections.abc import Iterable
 from ..template import CrowdModel
 from pathlib import Path
 from tqdm.auto import tqdm
 import json
-import torch
-import torch.nn as nn
 import torch.nn.functional as f
 from torch.utils.data import DataLoader
 

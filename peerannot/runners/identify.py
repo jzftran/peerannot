@@ -2,19 +2,16 @@ import click
 import torch
 import peerannot.training.load_data as ptrain
 from pathlib import Path
-from .train import get_model, get_optimizer, run_epoch, evaluate
+from .train import get_model, get_optimizer, evaluate
 from torch.utils.data import DataLoader
 import torch.nn as nn
 from torch.utils.data import Dataset
 import numpy as np
-import pandas as pd
 import json
 import peerannot.models as pmod
 
 identification_strategies = pmod.identification_strategies
-identification_strategies = {
-    k.lower(): v for k, v in identification_strategies.items()
-}
+identification_strategies = {k.lower(): v for k, v in identification_strategies.items()}
 
 identification = click.Group(
     name="Running task identification with peerannot",
@@ -103,9 +100,7 @@ def adapt_dataset_to_method(dataset, method, n_classes, votes=None):
     return dataset
 
 
-@identification.command(
-    help="Display available method to identify ambiguous tasks"
-)
+@identification.command(help="Display available method to identify ambiguous tasks")
 def identificationinfo():
     print("Available methods for identification")
     print("-" * 10)
@@ -145,9 +140,7 @@ def dump(js, file, level=1):
     type=None,
     help="Path to file of hard labels (only for AUM)",
 )
-@click.option(
-    "--n-classes", "-K", default=2, type=int, help="Number of classes"
-)
+@click.option("--n-classes", "-K", default=2, type=int, help="Number of classes")
 @click.option(
     "--method",
     "-s",
@@ -174,12 +167,8 @@ def dump(js, file, level=1):
     default="resnet18",
     help="Name of neural network to use. The list is available at `peerannot modelinfo`",
 )
-@click.option(
-    "--n-epochs", type=int, default=50, help="Number of training epochs"
-)
-@click.option(
-    "--alpha", type=float, default=0.01, help="Cutoff hyperparameter"
-)
+@click.option("--n-epochs", type=int, default=50, help="Number of training epochs")
+@click.option("--alpha", type=float, default=0.01, help="Cutoff hyperparameter")
 @click.option("--topk", type=int, default=0, help="Use TopK WAUM with k=XXX")
 @click.option(
     "--n-params",
@@ -195,9 +184,7 @@ def dump(js, file, level=1):
     show_default=True,
     help="Use torch available weights to initialize the network",
 )
-@click.option(
-    "--momentum", type=float, default=0.9, help="Momentum for the optimizer"
-)
+@click.option("--momentum", type=float, default=0.9, help="Momentum for the optimizer")
 @click.option(
     "--metadata_path",
     type=click.Path(),
@@ -207,9 +194,7 @@ def dump(js, file, level=1):
 @click.option(
     "--decay", type=float, default=5e-4, help="Weight decay for the optimizer"
 )
-@click.option(
-    "--img-size", type=int, default=224, help="Size of image (square)"
-)
+@click.option("--img-size", type=int, default=224, help="Size of image (square)")
 @click.option(
     "--maxiter-DS",
     type=int,
@@ -287,9 +272,7 @@ def identify(folderpath, n_classes, method, **kwargs):
         strat = strategy(votes, n_classes=n_classes, **kwargs)
         strat.run(path=folderpath)
         return
-    trainset = ptrain.load_data(
-        path_folders / "train", labels_to_load, **kwargs
-    )
+    trainset = ptrain.load_data(path_folders / "train", labels_to_load, **kwargs)
 
     trainset = adapt_dataset_to_method(trainset, method, n_classes, votes)
     print(f"Train set: {len(trainset)} tasks")
@@ -391,14 +374,10 @@ def identify(folderpath, n_classes, method, **kwargs):
         print(f"Saved WAUM per worker values at {path_waum / 'waum.csv'}")
         with open(path_waum / "score_per_worker.json", "w") as f:
             dump(waum.score_per_worker, f, level=2)
-        print(
-            f"Saved score per worker values at {path_waum / 'score_per_worker.json'}"
-        )
+        print(f"Saved score per worker values at {path_waum / 'score_per_worker.json'}")
         with open(path_waum / "aum_per_worker.json", "w") as f:
             dump(waum.aum_per_worker, f, level=2)
-        print(
-            f"Saved AUM per worker values at {path_waum / 'aum_per_worker.json'}"
-        )
+        print(f"Saved AUM per worker values at {path_waum / 'aum_per_worker.json'}")
         np.savetxt(
             path_waum / f"too_hard_{alpha}.txt",
             waum.too_hard.astype(int),
@@ -409,9 +388,7 @@ def identify(folderpath, n_classes, method, **kwargs):
         from peerannot.models import WAUM
 
         waum = WAUM(
-            DataLoader(
-                trainset, batch_size=64, pin_memory=True, num_workers=1
-            ),
+            DataLoader(trainset, batch_size=64, pin_memory=True, num_workers=1),
             votes,
             n_classes,
             model,
@@ -427,24 +404,17 @@ def identify(folderpath, n_classes, method, **kwargs):
         who = "pleiss" if kwargs["use_pleiss"] else "yang"
         waum.run(alpha=kwargs["alpha"])
         path_waum = (
-            path_folders
-            / "identification"
-            / kwargs["model"]
-            / f"waum_{alpha}_{who}"
+            path_folders / "identification" / kwargs["model"] / f"waum_{alpha}_{who}"
         )
         path_waum.mkdir(exist_ok=True, parents=True)
         waum.waum.to_csv(path_waum / "waum.csv", index=False)
         print(f"Saved WAUM values at {path_waum / 'waum.csv'}")
         with open(path_waum / "score_per_worker.json", "w") as f:
             dump(waum.score_per_worker, f, level=2)
-        print(
-            f"Saved score per worker values at {path_waum / 'score_per_worker.json'}"
-        )
+        print(f"Saved score per worker values at {path_waum / 'score_per_worker.json'}")
         with open(path_waum / "aum_per_worker.json", "w") as f:
             dump(waum.aum_per_worker, f, level=2)
-        print(
-            f"Saved AUM per worker values at {path_waum / 'aum_per_worker.json'}"
-        )
+        print(f"Saved AUM per worker values at {path_waum / 'aum_per_worker.json'}")
         np.savetxt(
             path_waum / f"too_hard_{alpha}.txt",
             waum.too_hard.astype(int),
@@ -458,6 +428,4 @@ def identify(folderpath, n_classes, method, **kwargs):
         path_file = path_results / f"labels_{method.lower()}_{str(alpha)}.npy"
         yhat = waum.get_probas()
         np.save(path_file, yhat)
-        print(
-            f"Aggregated labels stored at {path_file} with shape {yhat.shape}"
-        )
+        print(f"Aggregated labels stored at {path_file} with shape {yhat.shape}")

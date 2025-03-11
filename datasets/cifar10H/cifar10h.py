@@ -44,16 +44,12 @@ class CIFAR10H:
             if i < 9500:
                 save_image(
                     img,
-                    train_path
-                    / classes[label]
-                    / (classes[label] + f"-{i}.png"),
+                    train_path / classes[label] / (classes[label] + f"-{i}.png"),
                 )
             else:
                 save_image(
                     img,
-                    valid_path
-                    / classes[label]
-                    / (classes[label] + f"-{i}.png"),
+                    valid_path / classes[label] / (classes[label] + f"-{i}.png"),
                 )
         for i, (img, label) in tqdm(enumerate(testset), total=len(testset)):
             save_image(

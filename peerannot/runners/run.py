@@ -22,9 +22,7 @@ run = click.Group(
 def check_dataset(path, path_metadata):
     assert (
         path / "answers.json"
-    ).exists(), (
-        "Dataset path should contain the votes in a `answers.json` file"
-    )
+    ).exists(), "Dataset path should contain the votes in a `answers.json` file"
     assert (
         path_metadata.exists()
     ), "Dataset path should contain a `metadata.json` file with necessary information such as number of classes. Please read doc for more information"
@@ -79,9 +77,7 @@ def agginfo():
     default=Path.cwd() / "answers.json",
     help="Crowdsourced labels in json file",
 )
-@click.option(
-    "--img-size", type=int, default=224, help="Size of image (square)"
-)
+@click.option("--img-size", type=int, default=224, help="Size of image (square)")
 @click.option(
     "--pretrained",
     is_flag=True,
@@ -89,13 +85,9 @@ def agginfo():
     show_default=True,
     help="Use torch available weights to initialize the network",
 )
-@click.option(
-    "--n-epochs", type=int, default=100, help="Number of training epochs"
-)
+@click.option("--n-epochs", type=int, default=100, help="Number of training epochs")
 @click.option("--lr", type=float, default=0.1, help="Learning rate")
-@click.option(
-    "--momentum", type=float, default=0.9, help="Momentum for the optimizer"
-)
+@click.option("--momentum", type=float, default=0.9, help="Momentum for the optimizer")
 @click.option(
     "--decay", type=float, default=5e-4, help="Weight decay for the optimizer"
 )
@@ -263,9 +255,7 @@ def aggregate(**kwargs):
     print(f"Running aggregation {strat_name} with options {options}")
     if not hasattr(strat, "run"):
         strat = strat(answers, metadata["n_classes"], **kwargs)
-    elif strat_name in list(
-        map(lambda x: x.lower(), list(agg_strategies.keys()))
-    ):
+    elif strat_name in list(map(lambda x: x.lower(), list(agg_strategies.keys()))):
         strat = strat(answers, metadata["n_classes"], **options, **kwargs)
         strat.run()
     else:

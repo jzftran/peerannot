@@ -36,9 +36,7 @@ class LabelMe:
         valid_path = self.DIR / "val"
         self.DIRdata = self.DIR / "data" / "LabelMe"
         child_dirs = [
-            p
-            for p in self.DIRdata.iterdir()
-            if p.is_dir() and p.name != "prepared"
+            p for p in self.DIRdata.iterdir() if p.is_dir() and p.name != "prepared"
         ]
         classes = [p.name for p in child_dirs[0].iterdir() if p.is_dir()]
         for path in [train_path, valid_path, test_path]:
@@ -48,9 +46,7 @@ class LabelMe:
         # move files from directory
         self.conv_task = {}
         for folder in ["train", "valid", "test"]:
-            dst_dir = (
-                self.DIR / folder if folder != "valid" else self.DIR / "val"
-            )
+            dst_dir = self.DIR / folder if folder != "valid" else self.DIR / "val"
             for i, file in enumerate((self.DIRdata / folder).glob("*/*")):
                 if not file.is_dir():
                     parent = file.parent.name
@@ -73,9 +69,9 @@ class LabelMe:
         for id_, task in enumerate(crowdlabels):
             where = np.where(task != -1)[0]
             for worker in where:
-                res_train[self.conv_task[orig_name[id_]]][
-                    int(worker)
-                ] = convert_labels[int(task[worker])]
+                res_train[self.conv_task[orig_name[id_]]][int(worker)] = convert_labels[
+                    int(task[worker])
+                ]
 
         with open(self.DIR / "answers.json", "w") as answ:
             json.dump(res_train, answ, ensure_ascii=False, indent=3)

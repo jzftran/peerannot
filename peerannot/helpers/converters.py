@@ -28,9 +28,7 @@ class Converter:
             np.array(
                 [
                     el
-                    for els in [
-                        list(j.values()) for j in self.answers.values()
-                    ]
+                    for els in [list(j.values()) for j in self.answers.values()]
                     for el in els
                 ]
             )
@@ -39,9 +37,7 @@ class Converter:
 
     def map_string(self):
         self.table_task = {val: i for i, val in enumerate(self.get_tasks())}
-        self.table_worker = {
-            val: i for i, val in enumerate(self.get_workers())
-        }
+        self.table_worker = {val: i for i, val in enumerate(self.get_workers())}
         labs = self.get_labels()
         self.lab_type = labs.dtype
         if self.lab_type == "int":
@@ -55,17 +51,11 @@ class Converter:
             self.inv_task = np.argsort(list(self.table_task.keys()))
         else:
             self.inv_task = np.arange(len(self.table_labels))
-        self.inv_table_worker = {
-            val: i for i, val in self.table_worker.items()
-        }
+        self.inv_table_worker = {val: i for i, val in self.table_worker.items()}
         if self.lab_type == "int":
-            self.inv_labels = {
-                int(val): int(i) for i, val in self.table_labels.items()
-            }
+            self.inv_labels = {int(val): int(i) for i, val in self.table_labels.items()}
         else:
-            self.inv_labels = {
-                int(val): i for i, val in self.table_labels.items()
-            }
+            self.inv_labels = {int(val): i for i, val in self.table_labels.items()}
         self.inv_labels[-1] = -1
 
     def check_index(self):

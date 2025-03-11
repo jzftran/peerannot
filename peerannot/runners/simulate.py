@@ -16,9 +16,7 @@ simulation = click.Group(
 )
 @click.option("--n-worker", type=int, default=1, help="Number of workers")
 @click.option("--n-task", type=int, default=20, help="Number of tasks")
-@click.option(
-    "--n-classes", "-K", type=int, default=2, help="Number of classes"
-)
+@click.option("--n-classes", "-K", type=int, default=2, help="Number of classes")
 @click.option(
     "--folder",
     type=click.Path(),
@@ -74,12 +72,8 @@ simulation = click.Group(
     default=False,
     help="If set, the number of votes per task is randomly chosen between 1 and the possible number of votes considering the constraint on the workerload and feedback force.",
 )
-@click.option(
-    "--seed", type=int, default=0, help="Randome state for reproducibility"
-)
-@click.option(
-    "--verbose", is_flag=True, default=False, help="Display more information"
-)
+@click.option("--seed", type=int, default=0, help="Randome state for reproducibility")
+@click.option("--verbose", is_flag=True, default=False, help="Display more information")
 def simulate(**kwargs):
     n_worker, n_task, K, path_ = (
         kwargs.pop("n_worker"),

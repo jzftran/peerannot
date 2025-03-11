@@ -1,5 +1,4 @@
 import torch
-from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 import torch.nn as nn
 import torch.optim as optim
@@ -8,14 +7,10 @@ from pathlib import Path
 from tqdm.auto import tqdm
 import torchmetrics
 import json
-import re
-import ast
 import numpy as np
-import peerannot.models as pmod
 import peerannot.training.load_data as ptrain
 from collections.abc import Iterable
 from peerannot.helpers import networks as nethelp
-from torchmetrics.classification import MulticlassAccuracy
 
 trainmod = click.Group(
     name="Running peerannot training",
@@ -81,9 +76,7 @@ def get_optimizer(net, optimizer, **kwargs):
             weight_decay=weight_decay,
         )
     elif optimizer.lower() == "adam":
-        optimizer = optim.Adam(
-            net.parameters() if use_parameters else [net], lr=lr
-        )
+        optimizer = optim.Adam(net.parameters() if use_parameters else [net], lr=lr)
     else:
         raise ValueError("Not implemented yet")
     if kwargs["scheduler"] == "cosine":
@@ -99,9 +92,7 @@ def get_optimizer(net, optimizer, **kwargs):
             optimizer, milestones=milestones, gamma=kwargs["lr_decay"]
         )
     else:
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, [1e10], gamma=1
-        )
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [1e10], gamma=1)
     return optimizer, scheduler
 
 
@@ -122,9 +113,7 @@ def get_optimizer(net, optimizer, **kwargs):
     type=int,
     help="Number of classes to separate",
 )
-@click.option(
-    "--labels", type=click.Path(exists=True), help="Path to file of labels"
-)
+@click.option("--labels", type=click.Path(exists=True), help="Path to file of labels")
 @click.option(
     "--optimizer",
     "-optim",
@@ -144,9 +133,7 @@ def get_optimizer(net, optimizer, **kwargs):
     default=None,
     help="Path to the metadata of the dataset if different than default",
 )
-@click.option(
-    "--img-size", type=int, default=224, help="Size of image (square)"
-)
+@click.option("--img-size", type=int, default=224, help="Size of image (square)")
 @click.option(
     "--data-augmentation",
     is_flag=True,
@@ -167,13 +154,9 @@ def get_optimizer(net, optimizer, **kwargs):
     show_default=True,
     help="Use torch available weights to initialize the network",
 )
-@click.option(
-    "--n-epochs", type=int, default=100, help="Number of training epochs"
-)
+@click.option("--n-epochs", type=int, default=100, help="Number of training epochs")
 @click.option("--lr", type=float, default=0.1, help="Learning rate")
-@click.option(
-    "--momentum", type=float, default=0.9, help="Momentum for the optimizer"
-)
+@click.option("--momentum", type=float, default=0.9, help="Momentum for the optimizer")
 @click.option(
     "--decay", type=float, default=5e-4, help="Weight decay for the optimizer"
 )
@@ -236,9 +219,7 @@ def train(datapath, output_name, n_classes, **kwargs):
     kwargs["n_workers"] = metadata["n_workers"]
 
     path_labels = Path(kwargs["labels"]).resolve()
-    trainset, valset, testset = load_all_data(
-        path_folders, path_labels, **kwargs
-    )
+    trainset, valset, testset = load_all_data(path_folders, path_labels, **kwargs)
     trainloader, testloader = DataLoader(
         trainset,
         shuffle=True,
@@ -307,16 +288,12 @@ def train(datapath, output_name, n_classes, **kwargs):
 
             # save if improve
             if logger["val_loss"][-1] < min_val_loss:
-                torch.save(
-                    model.state_dict(), path_best / f"{output_name}.pth"
-                )
+                torch.save(model.state_dict(), path_best / f"{output_name}.pth")
                 min_val_loss = logger["val_loss"][-1]
         scheduler.step()
         if epoch in kwargs["milestones"]:
             print()
-            print(
-                f"Learning rate = {scheduler.optimizer.param_groups[0]['lr']:.4f}"
-            )
+            print(f"Learning rate = {scheduler.optimizer.param_groups[0]['lr']:.4f}")
 
     # load and test model
     model.load_state_dict(torch.load(path_best / f"{output_name}.pth"))
@@ -340,9 +317,7 @@ def train(datapath, output_name, n_classes, **kwargs):
     (path_folders / "results").mkdir(parents=True, exist_ok=True)
     with open(path_folders / "results" / f"{output_name}.json", "w") as f:
         json.dump(logger, f, indent=3, ensure_ascii=False)
-    print(
-        f"Results stored in {path_folders / 'results' / f'{output_name}.json'}"
-    )
+    print(f"Results stored in {path_folders / 'results' / f'{output_name}.json'}")
 
 
 def evaluate(model, loader, criterion, logger, test=True, n_classes=10):
@@ -406,9 +381,7 @@ def evaluate(model, loader, criterion, logger, test=True, n_classes=10):
     if n_classes >= 8:
         all_micro_macro_topk = []
         for metric in accuracies_topk:
-            all_micro_macro_topk.append(
-                (metric.compute() * 100).to("cpu").item()
-            )
+            all_micro_macro_topk.append((metric.compute() * 100).to("cpu").item())
 
     if test:  # also measure the calibration errors
         logger["test_loss"] = avg_loss

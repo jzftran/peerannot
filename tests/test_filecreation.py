@@ -1,4 +1,3 @@
-import numpy as np
 from pathlib import Path
 import os
 import os.path
@@ -29,11 +28,11 @@ def test_custom_creation():
     # Test the answers txt format (Rodrigues matrix format), with a test set and a val set
     os.makedirs(dir_temp)
     currentPath = Path(__file__).parents[1] / "datasets" / "customDataset.py"
-    result = subprocess.run(
+    subprocess.run(
         [
             "peerannot",
             "install",
-            Path(__file__).parents[1] / "datasets" / "customDataset.py",
+            currentPath,
             "--train-path",
             dir_train,
             "--test-path",

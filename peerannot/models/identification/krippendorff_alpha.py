@@ -5,6 +5,7 @@ Krippendorff Alpha
 
 Python implementation from Thomas Grill (https://github.com/grrrr/krippendorff-alpha)
 """
+
 import numpy as np
 from ..template import CrowdModel
 from pathlib import Path
@@ -21,9 +22,7 @@ class Krippendorff_Alpha(CrowdModel):
     def run(self, path):
         # Create pair values to compare
         units = dict(
-            (it, list(d.values()))
-            for it, d in self.answers.items()
-            if len(d) > 1
+            (it, list(d.values())) for it, d in self.answers.items() if len(d) > 1
         )  # units with pairable values
 
         n = sum(len(pv) for pv in units.values())
