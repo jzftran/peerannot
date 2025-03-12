@@ -7,7 +7,7 @@ import warnings
 class Dawid_Skene(CrowdModel):
     """
     =============================
-    Dawid and skene model (1979)
+    Dawid and Skene model (1979)
     =============================
 
     Assumptions:

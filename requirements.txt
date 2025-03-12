@@ -6,7 +6,7 @@ torchmetrics
 click>=8.0.0
 numpy>=1.22.1
 pandas>=1.5.2
-Pillow>=9.4.0
+Pillow~=11.1.0
 plotly>=5.10.0
 scikit-learn>=1.2.1
 scipy>=1.7.3
@@ -15,3 +15,4 @@ pytest
 coverage
 pytest-cov
 pytest-timeout
+cffi

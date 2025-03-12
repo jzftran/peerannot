@@ -2,3 +2,6 @@
 
 line-length = 79
 select = ["ALL"]
+
+[tool.ruff.lint]
+ignore = ["D",]

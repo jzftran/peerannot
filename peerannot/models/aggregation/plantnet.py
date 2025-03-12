@@ -18,8 +18,9 @@ class PlantNet(CrowdModel):
     ===================================
 
     Weighted majority vote based on the number of identified
-    classes (species) per worker. Each task if either valid (:math:`s_i=1` or not)
-    if the confidence and accuracy in the estimated label are above the set thresholds.
+    classes (species) per worker. Each task if either valid
+    (:math:`s_i=1` or not) if the confidence and accuracy in the estimated
+    label are above the set thresholds.
     """
 
     def __init__(
@@ -36,7 +37,8 @@ class PlantNet(CrowdModel):
         threshold_scores=None,  # threshold for scores
         **kwargs,
     ):
-        r"""Compute a weighted majority vote based on the number of identified classes (species) per worker
+        r"""Compute a weighted majority vote based on the number of identified
+        classes (species) per worker
 
         :param answers: Dictionary of workers answers with format
 
