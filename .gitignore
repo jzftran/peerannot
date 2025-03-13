@@ -219,3 +219,6 @@ doc/_build/
 
 doc/interface_api/generated/
 doc/tutorials/authors_toy.txt
+
+# temp folder
+temp/

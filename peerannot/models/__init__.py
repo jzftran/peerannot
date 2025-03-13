@@ -1,7 +1,7 @@
 from .aggregation.MV import MV
 from .aggregation.NaiveSoft import NaiveSoft
-from .aggregation.DS import Dawid_Skene
-from .aggregation.DS_clust import Dawid_Skene_clust
+from .aggregation.DS import DawidSkene
+from .aggregation.DS_clust import DawidSkeneClust
 from .aggregation.GLAD import GLAD
 from .aggregation.WDS import WDS
 from .aggregation.twothird import TwoThird
@@ -23,8 +23,8 @@ from .agg_deep.Crowdlayer import Crowdlayer
 agg_strategies = {
     "MV": MV,
     "NaiveSoft": NaiveSoft,
-    "DS": Dawid_Skene,
-    "DSWC": Dawid_Skene_clust,
+    "DS": DawidSkene,
+    "DSWC": DawidSkeneClust,
     "GLAD": GLAD,
     "WDS": WDS,
     "PlantNet": PlantNet,

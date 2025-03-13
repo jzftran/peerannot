@@ -29,9 +29,9 @@ All aggregation-based strategies are available running:
     NaiveSoft.NaiveSoft
     Wawa.Wawa
     IWMV.IWMV
-    DS.Dawid_Skene
+    DS.DawidSkene
     GLAD.GLAD
     plantnet.PlantNet
     twothird.TwoThird
-    DS_clust.Dawid_Skene_clust
+    DS_clust.DawidSkeneClust
     WDS.WDS

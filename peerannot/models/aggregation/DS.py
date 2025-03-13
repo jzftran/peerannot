@@ -4,7 +4,7 @@ from tqdm.auto import tqdm
 import warnings
 
 
-class Dawid_Skene(CrowdModel):
+class DawidSkene(CrowdModel):
     """
     =============================
     Dawid and Skene model (1979)
@@ -94,7 +94,9 @@ class Dawid_Skene(CrowdModel):
         for q in range(self.n_classes):
             pij = self.T[:, q] @ self.crowd_matrix.transpose((1, 0, 2))
             denom = pij.sum(1)
-            pi[:, q, :] = pij / np.where(denom <= 0, -1e9, denom).reshape(-1, 1)
+            pi[:, q, :] = pij / np.where(denom <= 0, -1e9, denom).reshape(
+                -1, 1
+            )
         self.p, self.pi = p, pi
 
     def e_step(self):
@@ -108,7 +110,9 @@ class Dawid_Skene(CrowdModel):
         for i in range(self.n_task):
             for j in range(self.n_classes):
                 num = (
-                    np.prod(np.power(self.pi[:, j, :], self.crowd_matrix[i, :, :]))
+                    np.prod(
+                        np.power(self.pi[:, j, :], self.crowd_matrix[i, :, :])
+                    )
                     * self.p[j]
                 )
                 T[i, j] = num
@@ -160,7 +164,9 @@ class Dawid_Skene(CrowdModel):
     def get_answers(self):
         """Get most probable labels"""
         if self.sparse:
-            return np.vectorize(self.converter.inv_labels.get)(self.T.argmax(axis=1))
+            return np.vectorize(self.converter.inv_labels.get)(
+                self.T.argmax(axis=1)
+            )
         return np.vectorize(self.converter.inv_labels.get)(
             np.argmax(self.get_probas(), axis=1)
         )

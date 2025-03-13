@@ -17,7 +17,7 @@ from ..template import CrowdModel
 import numpy as np
 
 
-class Dawid_Skene_clust(CrowdModel):
+class DawidSkeneClust(CrowdModel):
     def __init__(self, answers, n_classes, L=2, **kwargs):
         """Dawid and Skene model with clusterized confusion matrices using variational inference.
 
@@ -68,7 +68,9 @@ class Dawid_Skene_clust(CrowdModel):
 
         if random:
             theta = np.clip(
-                np.einsum("ki->ik", np.einsum("ijk->ki", x) / np.einsum("ijk->i", x))
+                np.einsum(
+                    "ki->ik", np.einsum("ijk->ki", x) / np.einsum("ijk->i", x)
+                )
                 + np.random.normal(scale=0.1, size=[n, K]),
                 0.0,
                 1.0,
@@ -84,7 +86,8 @@ class Dawid_Skene_clust(CrowdModel):
         x += delta
         pi = np.einsum(
             "mjk->jkm",
-            np.einsum("ik,ijm->mjk", theta, x) / np.einsum("ik,ijm->jk", theta, x),
+            np.einsum("ik,ijm->mjk", theta, x)
+            / np.einsum("ik,ijm->jk", theta, x),
         )
         order = np.array([np.linalg.norm(pi[j], ord="nuc") for j in range(m)])
         sigma = np.array(
@@ -94,8 +97,12 @@ class Dawid_Skene_clust(CrowdModel):
                 reverse=True,
             )
         )[:, 0].astype(dtype=int)
-        J = np.array([sigma[int(m * l / L) : int(m * (l + 1) / L)] for l in range(L)])
-        lambda_ = np.array([(np.sum(pi[J[l]], axis=0)) * L / m for l in range(L)])
+        J = np.array(
+            [sigma[int(m * l / L) : int(m * (l + 1) / L)] for l in range(L)]
+        )
+        lambda_ = np.array(
+            [(np.sum(pi[J[l]], axis=0)) * L / m for l in range(L)]
+        )
 
         phi = np.zeros([m, L])
         for l in range(L):
@@ -106,7 +113,9 @@ class Dawid_Skene_clust(CrowdModel):
         tau = np.einsum("jl->l", phi) / m
         return theta, phi, rho, tau, lambda_
 
-    def variational_update(self, x, theta, phi, rho, tau, lambda_, delta=1e-10):
+    def variational_update(
+        self, x, theta, phi, rho, tau, lambda_, delta=1e-10
+    ):
         theta_prime = np.exp(
             np.einsum("ijm,jl,lkm->ik", x, phi, np.log(lambda_ + delta))
             + np.log(rho + delta)
@@ -115,7 +124,9 @@ class Dawid_Skene_clust(CrowdModel):
             np.einsum("ijm,ik,lkm->jl", x, theta, np.log(lambda_ + delta))
             + np.log(tau + delta)
         )
-        theta = np.einsum("ki->ik", theta_prime.T / np.sum(theta_prime.T, axis=0))
+        theta = np.einsum(
+            "ki->ik", theta_prime.T / np.sum(theta_prime.T, axis=0)
+        )
         phi = np.einsum("lj->jl", phi_prime.T / np.sum(phi_prime.T, axis=0))
         return theta, phi
 
@@ -124,7 +135,9 @@ class Dawid_Skene_clust(CrowdModel):
         m = x.shape[1]
 
         lambda_prime = np.einsum("ik,jl,ijm->mlk", theta, phi, x)
-        lambda_ = np.einsum("mlk->lkm", lambda_prime / np.sum(lambda_prime, axis=0))
+        lambda_ = np.einsum(
+            "mlk->lkm", lambda_prime / np.sum(lambda_prime, axis=0)
+        )
 
         rho = np.einsum("ik->k", theta) / n
         tau = np.einsum("jl->l", phi) / m
@@ -133,7 +146,9 @@ class Dawid_Skene_clust(CrowdModel):
 
     def elbo(self, x, theta, phi, rho, tau, lambda_, delta=1e-10):
         l = (
-            np.einsum("ik,jl,ijm,lkm->", theta, phi, x, np.log(lambda_ + delta))
+            np.einsum(
+                "ik,jl,ijm,lkm->", theta, phi, x, np.log(lambda_ + delta)
+            )
             + np.einsum("ik,k->", theta, np.log(rho + delta))
             + np.einsum("jl,l->", phi, np.log(tau + delta))
             - np.einsum("ik,ik->", theta, np.log(theta + delta))
@@ -162,7 +177,9 @@ class Dawid_Skene_clust(CrowdModel):
         )
         l = -1e100
         while True:
-            theta, phi = self.variational_update(x, theta, phi, rho, tau, lambda_)
+            theta, phi = self.variational_update(
+                x, theta, phi, rho, tau, lambda_
+            )
             rho, tau, lambda_ = self.hyper_parameter_update(x, theta, phi)
             l_ = self.elbo(x, theta, phi, rho, tau, lambda_)
             if self.convergence_condition(l_, l, epsilon):

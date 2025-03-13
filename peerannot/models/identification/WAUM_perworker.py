@@ -1,6 +1,6 @@
 from ..template import CrowdModel
 import pandas as pd
-from peerannot.models.aggregation.DS import Dawid_Skene as DS
+from peerannot.models.aggregation.DS import DawidSkene as DS
 import torch
 from pathlib import Path
 from torch.utils.data import Subset
@@ -49,7 +49,7 @@ class WAUM_perworker(CrowdModel):
         n_epoch,
         verbose=False,
         use_pleiss=False,
-        **kwargs
+        **kwargs,
     ):
         """Compute the WAUM score for each task using a stacked version of the dataset (stacked over workers). Each classifier is trained on :math:`(x_i, y_i^{(j)})_i` for a given worker :math:`j`. THE WAUM per worker writes:
 
@@ -121,7 +121,9 @@ class WAUM_perworker(CrowdModel):
         :type cut: bool, optional
         """
         if not cut:
-            self.ds = DS(self.answers, self.n_classes, n_workers=self.n_workers)
+            self.ds = DS(
+                self.answers, self.n_classes, n_workers=self.n_workers
+            )
             self.ds.run(maxiter=self.maxiterDS)
         else:
             self.answers_waum = {}
@@ -130,7 +132,9 @@ class WAUM_perworker(CrowdModel):
                 if int(key) not in self.too_hard[:, 1]:
                     self.answers_waum[i] = val
                     i += 1
-            self.ds = DS(self.answers_waum, self.n_classes, n_workers=self.n_workers)
+            self.ds = DS(
+                self.answers_waum, self.n_classes, n_workers=self.n_workers
+            )
             self.ds.run(maxiter=self.maxiterDS)
 
         self.pi = self.ds.pi
@@ -209,7 +213,11 @@ class WAUM_perworker(CrowdModel):
             dl = torch.utils.data.DataLoader(
                 sub, batch_size=50, worker_init_fn=0, shuffle=True
             )
-            pij = torch.tensor(self.pi[int(j)]).type(torch.FloatTensor).to(self.DEVICE)
+            pij = (
+                torch.tensor(self.pi[int(j)])
+                .type(torch.FloatTensor)
+                .to(self.DEVICE)
+            )
             self.model.to(self.DEVICE)
             self.model.train()
             for epoch in (
@@ -218,7 +226,9 @@ class WAUM_perworker(CrowdModel):
                 else range(self.n_epoch)
             ):
                 for batch in dl:
-                    len_, out, labels, idx, truth = self.make_step(data_j, batch)
+                    len_, out, labels, idx, truth = self.make_step(
+                        data_j, batch
+                    )
                     if len_ is None:
                         continue
                     AUM_recorder["task"].extend(self.filenames[idx])
@@ -231,19 +241,27 @@ class WAUM_perworker(CrowdModel):
                     # s_y and P_y
                     if len_ > 1:
                         AUM_recorder["label_logit"].extend(
-                            out.gather(1, labels.view(-1, 1)).squeeze().tolist()
+                            out.gather(1, labels.view(-1, 1))
+                            .squeeze()
+                            .tolist()
                         )
                         probs = out.softmax(dim=1)
                         AUM_recorder["label_prob"].extend(
-                            probs.gather(1, labels.view(-1, 1)).squeeze().tolist()
+                            probs.gather(1, labels.view(-1, 1))
+                            .squeeze()
+                            .tolist()
                         )
                     else:
                         AUM_recorder["label_logit"].extend(
-                            out.gather(1, labels.view(-1, 1)).squeeze(0).tolist()
+                            out.gather(1, labels.view(-1, 1))
+                            .squeeze(0)
+                            .tolist()
                         )
                         probs = out.softmax(dim=1)
                         AUM_recorder["label_prob"].extend(
-                            probs.gather(1, labels.view(-1, 1)).squeeze(0).tolist()
+                            probs.gather(1, labels.view(-1, 1))
+                            .squeeze(0)
+                            .tolist()
                         )
 
                     # (s\y)[1] and (P\y)[1]
@@ -264,8 +282,12 @@ class WAUM_perworker(CrowdModel):
                     if len(other_logit_values) > 1:
                         other_logit_values = other_logit_values.squeeze()
                         other_prob_values = other_prob_values.squeeze()
-                    AUM_recorder["other_max_logit"].extend(other_logit_values.tolist())
-                    AUM_recorder["other_max_prob"].extend(other_prob_values.tolist())
+                    AUM_recorder["other_max_logit"].extend(
+                        other_logit_values.tolist()
+                    )
+                    AUM_recorder["other_max_prob"].extend(
+                        other_prob_values.tolist()
+                    )
 
                     # s[2] ans P[2]
                     second_logit = torch.sort(out, axis=1)[0][:, -2]
@@ -294,9 +316,7 @@ class WAUM_perworker(CrowdModel):
                     "score",
                 ] = tmp[
                     (tmp.worker == j) & (tmp.epoch == self.n_epoch - 1)
-                ].score.values[
-                    0
-                ]
+                ].score.values[0]
         self.AUM_recorder = recorder2
 
     def reset(self):

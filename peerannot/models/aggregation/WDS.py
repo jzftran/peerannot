@@ -1,6 +1,6 @@
 from ..template import CrowdModel
 import numpy as np
-from peerannot.models.aggregation.DS import Dawid_Skene
+from peerannot.models.aggregation.DS import DawidSkene
 
 
 class WDS(CrowdModel):
@@ -47,7 +47,7 @@ class WDS(CrowdModel):
 
     def run(self):
         """Run DS model to get confusion matrices"""
-        ds = Dawid_Skene(self.answers, self.n_classes, n_workers=self.n_workers)
+        ds = DawidSkene(self.answers, self.n_classes, n_workers=self.n_workers)
         ds.run()
         self.pi = ds.pi
         self.ds = ds

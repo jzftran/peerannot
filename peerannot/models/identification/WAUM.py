@@ -1,6 +1,6 @@
 from ..template import CrowdModel
 import pandas as pd
-from peerannot.models.aggregation.DS import Dawid_Skene as DS
+from peerannot.models.aggregation.DS import DawidSkene as DS
 import torch
 from pathlib import Path
 from tqdm.auto import tqdm
@@ -49,7 +49,7 @@ class WAUM(CrowdModel):
         verbose=False,
         use_pleiss=False,
         topk=False,
-        **kwargs
+        **kwargs,
     ):
         """Compute the WAUM score for each task using a stacked version of the dataset (stacked over workers)
 
@@ -109,7 +109,10 @@ class WAUM(CrowdModel):
         else:
             self.topk = int(topk)
         self.filenames = np.array(
-            [Path(samp[0]).name for samp in self.tasks.dataset.dataset.base_samples]
+            [
+                Path(samp[0]).name
+                for samp in self.tasks.dataset.dataset.base_samples
+            ]
         )
 
         self.path = Path("./temp/").mkdir(parents=True, exist_ok=True)
@@ -122,7 +125,9 @@ class WAUM(CrowdModel):
         :type cut: bool, optional
         """
         if not cut:
-            self.ds = DS(self.answers, self.n_classes, n_workers=self.n_workers)
+            self.ds = DS(
+                self.answers, self.n_classes, n_workers=self.n_workers
+            )
             self.ds.run(maxiter=self.maxiterDS)
         else:
             self.answers_waum = {}
@@ -131,7 +136,9 @@ class WAUM(CrowdModel):
                 if int(key) not in self.too_hard[:, 1]:
                     self.answers_waum[i] = val
                     i += 1
-            self.ds = DS(self.answers_waum, self.n_classes, n_workers=self.n_workers)
+            self.ds = DS(
+                self.answers_waum, self.n_classes, n_workers=self.n_workers
+            )
             self.ds.run(maxiter=self.maxiterDS)
 
         self.pi = self.ds.pi
@@ -224,8 +231,12 @@ class WAUM(CrowdModel):
                     )
 
                 # (s\y)[1] and (P\y)[1]
-                masked_logits = torch.scatter(out, 1, y.view(-1, 1), float("-inf"))
-                masked_probs = torch.scatter(probs, 1, y.view(-1, 1), float("-inf"))
+                masked_logits = torch.scatter(
+                    out, 1, y.view(-1, 1), float("-inf")
+                )
+                masked_probs = torch.scatter(
+                    probs, 1, y.view(-1, 1), float("-inf")
+                )
                 (
                     other_logit_values,
                     other_logit_index,
@@ -237,8 +248,12 @@ class WAUM(CrowdModel):
                 if len(other_logit_values) > 1:
                     other_logit_values = other_logit_values.squeeze()
                     other_prob_values = other_prob_values.squeeze()
-                AUM_recorder["other_max_logit"].extend(other_logit_values.tolist())
-                AUM_recorder["other_max_prob"].extend(other_prob_values.tolist())
+                AUM_recorder["other_max_logit"].extend(
+                    other_logit_values.tolist()
+                )
+                AUM_recorder["other_max_prob"].extend(
+                    other_prob_values.tolist()
+                )
 
                 # s[2] ans P[2]
                 second_logit = torch.sort(out, axis=1)[0][:, -(self.topk + 1)]
@@ -247,12 +262,16 @@ class WAUM(CrowdModel):
                 AUM_recorder["secondprob"].extend(second_prob.tolist())
                 for ll in range(len_):
                     AUM_recorder["score"].append(
-                        self.get_psuccess(probs[ll], pij[int(ww[ll])]).cpu().numpy()
+                        self.get_psuccess(probs[ll], pij[int(ww[ll])])
+                        .cpu()
+                        .numpy()
                     )
         self.AUM_recorder = pd.DataFrame(AUM_recorder)
         uni_ = self.AUM_recorder["index"].unique()
         for task in (
-            tqdm(uni_, total=len(uni_), desc="Scores") if self.verbose else uni_
+            tqdm(uni_, total=len(uni_), desc="Scores")
+            if self.verbose
+            else uni_
         ):
             workers = self.AUM_recorder.loc[
                 self.AUM_recorder["index"] == task, "worker"

@@ -36,7 +36,7 @@ def test_ns():
 
 
 def test_ds():
-    from peerannot.models import Dawid_Skene as DS
+    from peerannot.models import DawidSkene as DS
 
     ds = DS(ANSWERS, n_classes=2, n_workers=4)
     ds.run(maxiter=10)
@@ -59,7 +59,9 @@ def test_wawa():
         wawa.run()
         y = wawa.get_answers()
         expected = np.array([1, 0, 1])
-        assert np.isclose((wawa.worker_score - np.array([1 / 2, 1, 1, 1 / 2])).sum(), 0)
+        assert np.isclose(
+            (wawa.worker_score - np.array([1 / 2, 1, 1, 1 / 2])).sum(), 0
+        )
         assert all([e == y_ for e, y_ in zip(expected, y)])
         # assert True == False
 
@@ -93,7 +95,9 @@ def test_twothird():
 def test_glad():
     from peerannot.models import GLAD
 
-    glad = GLAD(ANSWERS, n_classes=2, n_workers=4, dataset=dir_toydata / "temp")
+    glad = GLAD(
+        ANSWERS, n_classes=2, n_workers=4, dataset=dir_toydata / "temp"
+    )
     glad.run()
     y = glad.get_answers()
     expected = np.array([1, 0, 1])
@@ -102,7 +106,14 @@ def test_glad():
     assert glad.beta.shape == (3,)
     assert glad.alpha.shape == (4,)
     assert (
-        len(list((dir_toydata / "temp" / "identification" / "glad").glob("*.npy"))) == 2
+        len(
+            list(
+                (dir_toydata / "temp" / "identification" / "glad").glob(
+                    "*.npy"
+                )
+            )
+        )
+        == 2
     )
     shutil.rmtree(dir_toydata / "temp")  # cleanup
 
