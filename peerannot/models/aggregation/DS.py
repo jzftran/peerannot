@@ -1,11 +1,17 @@
-from ..template import CrowdModel
+from __future__ import annotations
+from os import PathLike
+from typing import Any, Generator
+from ..template import CrowdModel, AnswersDict
 import numpy as np
 from tqdm.auto import tqdm
 import warnings
+from pydantic import BaseModel, Field
+from typing import Annotated
+from annotated_types import Ge
 
 
 class DawidSkene(CrowdModel):
-    """
+    r"""
     =============================
     Dawid and Skene model (1979)
     =============================
@@ -18,10 +24,9 @@ class DawidSkene(CrowdModel):
 
     Estimating:
     - One confusion matrix for each workers
-    """
 
-    def __init__(self, answers, n_classes, sparse=False, **kwargs):
-        """Dawid and Skene strategy: estimate confusion matrix for each worker.
+
+        Dawid and Skene strategy: estimate confusion matrix for each worker.
 
         Assuming that workers are independent, the model assumes that
 
@@ -51,14 +56,32 @@ class DawidSkene(CrowdModel):
         :type sparse: bool, optional
         :param n_classes: Number of possible classes, defaults to 2
         :type n_classes: int, optional
-        """
+
+    """
+
+    def __init__(
+        self,
+        answers: AnswersDict,
+        n_workers: Annotated[
+            int,
+            Ge(0),
+        ],  # TODO@jzftran probably annotation with 0 or 1 worker doesn't make sense
+        n_classes: Annotated[int, Ge(2)],
+        *,
+        sparse: bool = False,
+        path_remove: (
+            PathLike | str | list[str] | Generator[str, None, None] | None
+        ) = None,
+    ) -> None:
         super().__init__(answers)
+        self.n_workers = n_workers
         self.n_classes = n_classes
-        self.n_workers = kwargs["n_workers"]
         self.sparse = sparse
-        if kwargs.get("path_remove", None):
-            to_remove = np.loadtxt(kwargs["path_remove"], dtype=int)
-            self.answers_modif = {}
+        self.path_remove = path_remove
+
+        self.answers_modif = {}
+        if self.path_remove is not None:
+            to_remove = np.loadtxt(self.path_remove, dtype=int)
             i = 0
             for key, val in self.answers.items():
                 if int(key) not in to_remove[:, 1]:
@@ -164,10 +187,8 @@ class DawidSkene(CrowdModel):
     def get_answers(self):
         """Get most probable labels"""
         if self.sparse:
-            return np.vectorize(self.converter.inv_labels.get)(
-                self.T.argmax(axis=1)
-            )
-        return np.vectorize(self.converter.inv_labels.get)(
+            return np.vectorize(self.inv_labels.get)(self.T.argmax(axis=1))
+        return np.vectorize(self.inv_labels.get)(
             np.argmax(self.get_probas(), axis=1)
         )
 

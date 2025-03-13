@@ -38,7 +38,7 @@ def test_ns():
 def test_ds():
     from peerannot.models import DawidSkene as DS
 
-    ds = DS(ANSWERS, n_classes=2, n_workers=4)
+    ds = DS(answers=ANSWERS, n_classes=2, n_workers=4)
     ds.run(maxiter=10)
     y = ds.get_probas()
     assert y.shape == (3, 2)
