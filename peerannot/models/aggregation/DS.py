@@ -3,11 +3,14 @@ from os import PathLike
 from typing import Any, Generator
 from ..template import CrowdModel, AnswersDict
 import numpy as np
+import numpy.typing as npt
 from tqdm.auto import tqdm
 import warnings
 from pydantic import BaseModel, Field, validate_call
 from typing import Annotated
 from annotated_types import Ge
+
+FilePathInput = PathLike | str | list[str] | Generator[str, None, None] | None
 
 
 class DawidSkene(CrowdModel):
@@ -24,9 +27,20 @@ class DawidSkene(CrowdModel):
 
     Estimating:
     - One confusion matrix for each workers
+    """
 
-
-        Dawid and Skene strategy: estimate confusion matrix for each worker.
+    @validate_call
+    def __init__(
+        self,
+        answers: AnswersDict,
+        # TODO@jzftran probably annotation with 0 or 1 worker doesn't make sense
+        n_workers: Annotated[int, Ge(0)],
+        n_classes: Annotated[int, Ge(2)],
+        *,
+        sparse: bool = False,
+        path_remove: FilePathInput = None,
+    ) -> None:
+        r"""Dawid and Skene strategy: estimate confusion matrix for each worker.
 
         Assuming that workers are independent, the model assumes that
 
@@ -55,45 +69,32 @@ class DawidSkene(CrowdModel):
         :param sparse: If the number of workers/tasks/label is large (:math:`>10^{6}` for at least one), use sparse=True to run per task
         :type sparse: bool, optional
         :param n_classes: Number of possible classes, defaults to 2
-        :type n_classes: int, optional
+        :type n_classes: int, optional"""
 
-    """
-
-    @validate_call
-    def __init__(
-        self,
-        answers: AnswersDict,
-        n_workers: Annotated[
-            int,
-            Ge(0),
-        ],  # TODO@jzftran probably annotation with 0 or 1 worker doesn't make sense
-        n_classes: Annotated[int, Ge(2)],
-        *,
-        sparse: bool = False,
-        path_remove: (
-            PathLike | str | list[str] | Generator[str, None, None] | None
-        ) = None,
-    ) -> None:
         super().__init__(answers)
-        self.n_workers = n_workers
-        self.n_classes = n_classes
-        self.sparse = sparse
-        self.path_remove = path_remove
+        self.n_workers: int = n_workers
+        self.n_classes: int = n_classes
+        self.sparse: bool = sparse
+        self.path_remove: FilePathInput = path_remove
+        self.n_task: int = len(self.answers)
 
-        self.answers_modif = {}
+        self.exclude_answers()
+
+        self.init_crowd_matrix()
+
+    def exclude_answers(self) -> None:
+        answers_modif = {}
         if self.path_remove is not None:
             to_remove = np.loadtxt(self.path_remove, dtype=int)
             i = 0
             for key, val in self.answers.items():
                 if int(key) not in to_remove[:, 1]:
-                    self.answers_modif[i] = val
+                    answers_modif[i] = val
                     i += 1
-            self.answers = self.answers_modif
+            self.answers = answers_modif
 
-        self.n_task = len(self.answers)
-
-    def get_crowd_matrix(self):
-        """Transform dictionnary of labels to a tensor of size (n_task, n_workers, n_classes)"""
+    def init_crowd_matrix(self):
+        """Transform dictionnary of labels to a tensor of size (n_task, n_workers, n_classes)."""
         matrix = np.zeros((self.n_task, self.n_workers, self.n_classes))
         for task, ans in self.answers.items():
             for worker, label in ans.items():
@@ -102,11 +103,12 @@ class DawidSkene(CrowdModel):
 
     def init_T(self):
         """NS initialization"""
+        # T shape is n_task, n_workers
         T = self.crowd_matrix.sum(axis=1)
         tdim = T.sum(1, keepdims=True)
         self.T = np.where(tdim > 0, T / tdim, 0)
 
-    def m_step(self):
+    def _m_step(self):
         """Maximizing log likelihood (see eq. 2.3 and 2.4 Dawid and Skene 1979)
 
         Returns:
@@ -123,7 +125,7 @@ class DawidSkene(CrowdModel):
             )
         self.p, self.pi = p, pi
 
-    def e_step(self):
+    def _e_step(self):
         """Estimate indicator variables (see eq. 2.5 Dawid and Skene 1979)
 
         Returns:
@@ -148,7 +150,15 @@ class DawidSkene(CrowdModel):
         """Compute log likelihood of the model"""
         return np.log(np.sum(self.denom_e_step))
 
-    def run(self, epsilon=1e-6, maxiter=50, verbose=False):
+    @validate_call
+    def run(
+        self,
+        epsilon: Annotated[float, Ge(0)] = 1e-6,
+        maxiter: Annotated[int, Ge(0)] = 50,
+        *,
+        verbose: bool = False,
+    ) -> tuple[list[np.float64], int]:
+        # TODO: implement sparse
         """Run the EM optimization
 
         :param epsilon: stopping criterion (:math:`\\ell_1` norm between two iterates of log likelihood), defaults to 1e-6
@@ -161,14 +171,13 @@ class DawidSkene(CrowdModel):
         :rtype: (list,int)
         """
         if not self.sparse:
-            self.get_crowd_matrix()
             self.init_T()
             ll = []
             k, eps = 0, np.inf
             pbar = tqdm(total=maxiter, desc="Dawid and Skene")
             while k < maxiter and eps > epsilon:
-                self.m_step()
-                self.e_step()
+                self._m_step()
+                self._e_step()
                 likeli = self.log_likelihood()
                 ll.append(likeli)
                 if len(ll) >= 2:
