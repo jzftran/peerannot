@@ -80,7 +80,7 @@ class MV(CrowdModel):
                     np.flatnonzero(count == count.max())
                 )
         self.ans = ans
-        return np.vectorize(self.converter.inv_labels.get)(np.array(ans))
+        return np.vectorize(self.inv_labels.get)(np.array(ans))
 
     def get_probas(self):
         """Get labels obtained with majority voting aggregation

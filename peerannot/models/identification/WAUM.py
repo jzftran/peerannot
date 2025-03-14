@@ -454,7 +454,7 @@ class WAUM(CrowdModel):
                 task = self.answers[tt]
                 for worker, vote in task.items():
                     baseline[task_id, int(vote)] += self.pi[
-                        self.ds.converter.table_worker[int(worker)]
+                        self.ds.table_worker[int(worker)]
                     ][int(vote), int(vote)]
         self.baseline = baseline
         return np.where(
@@ -470,6 +470,6 @@ class WAUM(CrowdModel):
         :rtype: numpy.ndarray
         """
 
-        return np.vectorize(self.converter.inv_labels.get)(
+        return np.vectorize(self.inv_labels.get)(
             np.argmax(self.get_probas(), axis=1)
         )

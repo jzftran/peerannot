@@ -62,6 +62,6 @@ class NaiveSoft(CrowdModel):
         :return: Hard labels (majority vote)
         :rtype: numpy.ndarray
         """
-        return np.vectorize(self.converter.inv_labels.get)(
+        return np.vectorize(self.inv_labels.get)(
             np.argmax(self.get_probas(), axis=1)
         )

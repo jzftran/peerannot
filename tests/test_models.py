@@ -3,6 +3,10 @@ from pathlib import Path
 import json
 import shutil
 
+from pydantic import ValidationError
+import pytest
+from peerannot.models import DawidSkene
+
 dir_toydata = Path(__file__).parents[1] / "datasets" / "toy-data"
 
 
@@ -48,6 +52,13 @@ def test_ds():
 
     expected = np.array([[0.25, 0.75], [2 / 3, 1 / 3], [0, 1]])
     assert np.isclose((expected - ds.get_probas()).sum(), 0)
+
+
+def test_ds_wrong_parameters():
+    with pytest.raises(ValidationError) as exc_info:
+        ds = DawidSkene(answers=ANSWERS, n_classes=-2, n_workers=4)
+
+    assert "Input should be greater than or equal to 2" in str(exc_info.value)
 
 
 def test_wawa():

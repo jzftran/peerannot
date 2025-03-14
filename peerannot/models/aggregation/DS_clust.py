@@ -245,6 +245,6 @@ class DawidSkeneClust(CrowdModel):
         :return: Hard labels
         :rtype: numpy.ndarray(n_task)
         """
-        return np.vectorize(self.converter.inv_labels.get)(
+        return np.vectorize(self.inv_labels.get)(
             np.argmax(self.get_probas(), axis=1)
         )

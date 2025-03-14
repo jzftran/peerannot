@@ -5,7 +5,7 @@ from ..template import CrowdModel, AnswersDict
 import numpy as np
 from tqdm.auto import tqdm
 import warnings
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validate_call
 from typing import Annotated
 from annotated_types import Ge
 
@@ -59,6 +59,7 @@ class DawidSkene(CrowdModel):
 
     """
 
+    @validate_call
     def __init__(
         self,
         answers: AnswersDict,

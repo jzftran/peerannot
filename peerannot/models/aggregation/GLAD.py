@@ -146,7 +146,8 @@ class GLAD(CrowdModel):
         exponents = item[1:]
         correct = logsigmoid(exponents[delta]).sum()
         wrong = (
-            logsigmoid(-exponents[oneMinusDelta]) - np.log(float(self.n_classes - 1))
+            logsigmoid(-exponents[oneMinusDelta])
+            - np.log(float(self.n_classes - 1))
         ).sum()
         return correct + wrong
 
@@ -178,8 +179,12 @@ class GLAD(CrowdModel):
         self.beta = x[self.n_workers :].copy()
 
     def getBoundsX(self, alpha=(-100, 100), beta=(-100, 100)):
-        alpha_bounds = np.array([[alpha[0], alpha[1]] for i in range(self.n_workers)])
-        beta_bounds = np.array([[beta[0], beta[1]] for i in range(self.n_workers)])
+        alpha_bounds = np.array(
+            [[alpha[0], alpha[1]] for i in range(self.n_workers)]
+        )
+        beta_bounds = np.array(
+            [[beta[0], beta[1]] for i in range(self.n_workers)]
+        )
         return np.r_[alpha_bounds, beta_bounds]
 
     def f(self, x):
@@ -241,7 +246,9 @@ class GLAD(CrowdModel):
 
         probZ = args[2]
 
-        correct = probZ[delta] * np.exp(self.beta[delta]) * (1 - sigma_ab[delta])
+        correct = (
+            probZ[delta] * np.exp(self.beta[delta]) * (1 - sigma_ab[delta])
+        )
         wrong = (
             probZ[oneMinusDelta]
             * np.exp(self.beta[oneMinusDelta])
@@ -267,7 +274,6 @@ class GLAD(CrowdModel):
         return correct.sum() + wrong.sum()
 
     def gradientQ(self):
-
         dQdAlpha = -(self.alpha - self.priorAlpha)
         dQdBeta = -(self.beta - self.priorBeta)
 
@@ -329,7 +335,7 @@ class GLAD(CrowdModel):
         :return: Hard labels
         :rtype: numpy.ndarray
         """
-        return np.vectorize(self.converter.inv_labels.get)(
+        return np.vectorize(self.inv_labels.get)(
             np.argmax(self.get_probas(), axis=1)
         )
 

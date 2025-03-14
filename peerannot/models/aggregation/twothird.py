@@ -41,7 +41,9 @@ class TwoThird(CrowdModel):
         self.n_classes = n_classes
         self.sparse = sparse
         if kwargs.get("dataset", None):
-            self.path_save = Path(kwargs["dataset"]) / "identification" / "twothird"
+            self.path_save = (
+                Path(kwargs["dataset"]) / "identification" / "twothird"
+            )
         else:
             self.path_save = None
         if kwargs.get("path_remove", None):
@@ -93,7 +95,9 @@ class TwoThird(CrowdModel):
             ans = [
                 (
                     np.random.choice(
-                        np.flatnonzero(self.baseline[i] == self.baseline[i].max())
+                        np.flatnonzero(
+                            self.baseline[i] == self.baseline[i].max()
+                        )
                     )
                     if enough_votes[i] == 1
                     and self.baseline[i].max() / sum_[i] >= 2 / 3
@@ -109,7 +113,9 @@ class TwoThird(CrowdModel):
                 n_votes = len(task)
                 max_ = count.max()
                 if n_votes >= 2 and max_ / n_votes >= 2 / 3:
-                    ans[int(task_id)] = np.random.choice(np.flatnonzero(count == max_))
+                    ans[int(task_id)] = np.random.choice(
+                        np.flatnonzero(count == max_)
+                    )
         self.ans = ans
         if self.path_save:
             noconsensus = np.where(np.array(ans) == -1)[0]
@@ -119,4 +125,4 @@ class TwoThird(CrowdModel):
             if not self.path_save.exists():
                 self.path_save.mkdir(parents=True, exist_ok=True)
             np.savetxt(self.path_save / "too_hard.txt", tab, fmt="%1i")
-        return np.vectorize(self.converter.inv_labels.get)(np.array(ans))
+        return np.vectorize(self.inv_labels.get)(np.array(ans))

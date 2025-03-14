@@ -57,7 +57,11 @@ class Spam_Score(CrowdModel):
                 self.matrices = torch.load(mf).numpy()
         else:
             print("Running DS model")
-            ds = DS(self.answers, self.n_classes, n_workers=self.n_workers)
+            ds = DS(
+                self.answers,
+                n_classes=self.n_classes,
+                n_workers=self.n_workers,
+            )
             ds.run()
             self.matrices = ds.pi
 
