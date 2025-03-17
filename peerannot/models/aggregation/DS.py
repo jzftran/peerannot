@@ -1,20 +1,24 @@
-from __future__ import annotations
-from os import PathLike
-from typing import Any, Generator
-from ..template import CrowdModel, AnswersDict
-import numpy as np
-import numpy.typing as npt
-from tqdm.auto import tqdm
+# %%
 import warnings
-from pydantic import BaseModel, Field, validate_call
-from typing import Annotated
+from os import PathLike
+from sys import getsizeof
+from typing import Annotated, Generator
+
+import numpy as np
+import sparse as sp
 from annotated_types import Ge
+from loguru import logger
+from memory_profiler import profile
+from pydantic import validate_call
+from tqdm.auto import tqdm
+
+from ..template import AnswersDict, CrowdModel
 
 FilePathInput = PathLike | str | list[str] | Generator[str, None, None] | None
 
 
 class DawidSkene(CrowdModel):
-    r"""
+    """
     =============================
     Dawid and Skene model (1979)
     =============================
@@ -79,8 +83,14 @@ class DawidSkene(CrowdModel):
         self.n_task: int = len(self.answers)
 
         self.exclude_answers()
-
-        self.init_crowd_matrix()
+        if self.sparse:
+            self.init_sparse_crowd_matrix()
+            logger.info(
+                f"Sparse Crowd matrix{getsizeof(self.sparse_crowd_matrix)}"
+            )
+        else:
+            self.init_crowd_matrix()
+            logger.info(f"Dense Crowd matrix{getsizeof(self.crowd_matrix)}")
 
     def exclude_answers(self) -> None:
         answers_modif = {}
@@ -93,29 +103,62 @@ class DawidSkene(CrowdModel):
                     i += 1
             self.answers = answers_modif
 
+    def init_sparse_crowd_matrix(self):
+        """Transform dictionnary of labels to a tensor of size (n_task, n_workers, n_classes)."""
+        # TODO crowd matrix usually will be sparse, maybe there is another, better implementation for it
+        crowd_matrix = sp.DOK(
+            (self.n_task, self.n_workers, self.n_classes), dtype=np.uint16
+        )
+
+        for task, ans in self.answers.items():
+            for worker, label in ans.items():
+                crowd_matrix[task, worker, label] = 1
+
+        logger.info(f"Sparse crowd matrix {getsizeof(crowd_matrix)}")
+        self.sparse_crowd_matrix = crowd_matrix.to_coo()
+
     def init_crowd_matrix(self):
         """Transform dictionnary of labels to a tensor of size (n_task, n_workers, n_classes)."""
+
         matrix = np.zeros((self.n_task, self.n_workers, self.n_classes))
         for task, ans in self.answers.items():
             for worker, label in ans.items():
                 matrix[task, worker, label] += 1
+
+        logger.info(f"Dense crowd matrix  {getsizeof(matrix)}")
         self.crowd_matrix = matrix
 
     def init_T(self):
         """NS initialization"""
         # T shape is n_task, n_workers
         T = self.crowd_matrix.sum(axis=1)
+        logger.info(f"Size of T before calc: {getsizeof(T)}")
+
         tdim = T.sum(1, keepdims=True)
         self.T = np.where(tdim > 0, T / tdim, 0)
+        logger.info(f"Size of T: {getsizeof(self.T)}")
 
-    def _m_step(self):
+    def init_sparse_T(self):
+        """NS initialization"""
+        # T shape is n_task, n_workers
+        sparse_T = self.sparse_crowd_matrix.sum(axis=1)
+        logger.info(f"Size of sparse_T before calc: {getsizeof(sparse_T)}")
+
+        tdim = sparse_T.sum(1, keepdims=True).todense()
+        self.sparse_T = np.where(tdim > 0, sparse_T / tdim, 0)
+        logger.info(f"Size of sparse_T: {getsizeof(self.sparse_T)}")
+
+    def _m_step(
+        self,
+    ) -> None:
         """Maximizing log likelihood (see eq. 2.3 and 2.4 Dawid and Skene 1979)
 
         Returns:
             :math:`\\rho`: :math:`(\\rho_j)_j` probabilities that instance has true response j if drawn at random (class marginals)
             pi: number of times worker k records l when j is correct
         """
-        p = self.T.sum(0) / self.n_task
+        rho = self.T.sum(0) / self.n_task
+
         pi = np.zeros((self.n_workers, self.n_classes, self.n_classes))
         for q in range(self.n_classes):
             pij = self.T[:, q] @ self.crowd_matrix.transpose((1, 0, 2))
@@ -123,9 +166,59 @@ class DawidSkene(CrowdModel):
             pi[:, q, :] = pij / np.where(denom <= 0, -1e9, denom).reshape(
                 -1, 1
             )
-        self.p, self.pi = p, pi
+        self.rho, self.pi = rho, pi
 
-    def _e_step(self):
+    def _m_step_sparse(
+        self,
+    ):
+        """Maximizing log likelihood (see eq. 2.3 and 2.4 Dawid and Skene 1979)
+
+        Returns:
+            :math:`\\rho`: :math:`(\\rho_j)_j` probabilities that instance has true response j if drawn at random (class marginals)
+            pi: number of times worker k records l when j is correct
+        """
+        # pi could be bigger, at least inner 2d matrices should be implemented as sparse, probably the easiest way to create is to use dok array
+
+        self.rho = (
+            self.sparse_T.sum(axis=0) / self.n_task
+        )  # can rho be sparse?
+
+        # Compute sparse confusion matrices
+        for q in range(self.n_classes):
+            pij = self.sparse_T[:, q] @ self.sparse_crowd_matrix.transpose(
+                (1, 0, 2)
+            )
+            denom = pij.sum(1).todense()
+            norm = np.where(denom <= 0, -1e9, denom).reshape(-1, 1)
+            yield pij.to_scipy_sparse() / norm
+
+    # @line_profiler.profile
+    def _e_step_sparse(self) -> None:
+        """Estimate indicator variables (see eq. 2.5 Dawid and Skene 1979)
+
+        Returns:
+            T: New estimate for indicator variables (n_task, n_worker)
+            denom: value used to compute likelihood easily
+        """
+        T = sp.DOK(shape=(self.n_task, self.n_classes))
+
+        m_step = self._m_step_sparse()
+
+        for j, pij in enumerate(m_step):
+            for i in range(self.n_task):
+                num = (
+                    np.prod(np.power(pij, self.sparse_crowd_matrix[i]))
+                    * self.rho[j]
+                )
+                T[i, j] = num
+
+        T = T.to_coo()
+        self.denom_e_step = T.sum(1, keepdims=True).todense()
+        self.sparse_T = np.where(
+            self.denom_e_step > 0, T / self.denom_e_step, T
+        )
+
+    def _e_step(self) -> None:
         """Estimate indicator variables (see eq. 2.5 Dawid and Skene 1979)
 
         Returns:
@@ -139,7 +232,7 @@ class DawidSkene(CrowdModel):
                     np.prod(
                         np.power(self.pi[:, j, :], self.crowd_matrix[i, :, :])
                     )
-                    * self.p[j]
+                    * self.rho[j]
                 )
                 T[i, j] = num
         self.denom_e_step = T.sum(1, keepdims=True)
@@ -149,6 +242,65 @@ class DawidSkene(CrowdModel):
     def log_likelihood(self):
         """Compute log likelihood of the model"""
         return np.log(np.sum(self.denom_e_step))
+
+    def run_dense(
+        self,
+        epsilon: Annotated[float, Ge(0)] = 1e-6,
+        maxiter: Annotated[int, Ge(0)] = 50,
+        *,
+        verbose: bool = False,
+    ) -> tuple[list[np.float64], int]:
+        i = 0
+        eps = np.inf
+
+        self.init_T()
+        ll = []
+        pbar = tqdm(total=maxiter, desc="Dawid and Skene")
+        while i < maxiter and eps > epsilon:
+            self._m_step()
+            self._e_step()
+            likeli = self.log_likelihood()
+            ll.append(likeli)
+            if len(ll) >= 2:
+                eps = np.abs(ll[-1] - ll[-2])
+            i += 1
+            pbar.update(1)
+
+        pbar.set_description("Finished")
+        pbar.close()
+        self.c = i
+        if eps > epsilon and verbose:
+            print(f"DS did not converge: err={eps}")
+        return ll, i
+
+    def run_sparse(
+        self,
+        epsilon: Annotated[float, Ge(0)] = 1e-6,
+        maxiter: Annotated[int, Ge(0)] = 50,
+        *,
+        verbose: bool = False,
+    ) -> tuple[list[np.float64], int]:
+        i = 0
+        eps = np.inf
+
+        self.init_sparse_T()
+        ll = []
+        pbar = tqdm(total=maxiter, desc="Dawid and Skene Sparse")
+        while i < maxiter and eps > epsilon:
+            self._e_step_sparse()
+            likeli = self.log_likelihood()
+            ll.append(likeli)
+            if len(ll) >= 2:
+                eps = np.abs(ll[-1] - ll[-2])
+            i += 1
+            pbar.update(1)
+
+        pbar.set_description("Finished")
+        pbar.close()
+        self.c = i
+        if eps > epsilon and verbose:
+            print(f"DS did not converge: err={eps}")
+        return ll, i
 
     @validate_call
     def run(
@@ -170,34 +322,25 @@ class DawidSkene(CrowdModel):
         :return: Log likelihood values and number of steps taken
         :rtype: (list,int)
         """
-        if not self.sparse:
-            self.init_T()
-            ll = []
-            k, eps = 0, np.inf
-            pbar = tqdm(total=maxiter, desc="Dawid and Skene")
-            while k < maxiter and eps > epsilon:
-                self._m_step()
-                self._e_step()
-                likeli = self.log_likelihood()
-                ll.append(likeli)
-                if len(ll) >= 2:
-                    eps = np.abs(ll[-1] - ll[-2])
-                k += 1
-                pbar.update(1)
-            else:
-                pbar.set_description("Finished")
-            pbar.close()
-            self.c = k
-            if eps > epsilon and verbose:
-                print(f"DS did not converge: err={eps}")
-            return ll, k
-        else:
-            self.run_sparse(epsilon, maxiter, verbose)
+
+        if self.sparse:
+            return self.run_sparse(
+                epsilon=epsilon,
+                maxiter=maxiter,
+                verbose=verbose,
+            )
+        return self.run_dense(
+            epsilon=epsilon,
+            maxiter=maxiter,
+            verbose=verbose,
+        )
 
     def get_answers(self):
         """Get most probable labels"""
         if self.sparse:
-            return np.vectorize(self.inv_labels.get)(self.T.argmax(axis=1))
+            return np.vectorize(self.inv_labels.get)(
+                sp.argmax(self.sparse_T, axis=1).todense()
+            )
         return np.vectorize(self.inv_labels.get)(
             np.argmax(self.get_probas(), axis=1)
         )
@@ -208,6 +351,3 @@ class DawidSkene(CrowdModel):
             warnings.warn("Sparse implementation only returns hard labels")
             return self.get_answers()
         return self.T
-
-    def run_sparse(self, epsilon=1e-6, maxiter=50, verbose=False):
-        pass
