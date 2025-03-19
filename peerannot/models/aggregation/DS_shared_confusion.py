@@ -8,15 +8,16 @@ import numpy as np
 import sparse as sp
 from annotated_types import Ge
 from loguru import logger
+from memory_profiler import profile
 from pydantic import validate_call
 from tqdm.auto import tqdm
 
-from ..template import AnswersDict, CrowdModel
+from peerannot.models.template import AnswersDict, CrowdModel
 
 FilePathInput = PathLike | str | list[str] | Generator[str, None, None] | None
 
 
-class DawidSkene(CrowdModel):
+class DawidSkeneShared(CrowdModel):
     """
     =============================
     Dawid and Skene model (1979)
@@ -156,16 +157,18 @@ class DawidSkene(CrowdModel):
             :math:`\\rho`: :math:`(\\rho_j)_j` probabilities that instance has true response j if drawn at random (class marginals)
             pi: number of times worker k records l when j is correct
         """
-        rho = self.T.sum(0) / self.n_task
+        self.rho = self.T.sum(0) / self.n_task
 
-        pi = np.zeros((self.n_workers, self.n_classes, self.n_classes))
-        for q in range(self.n_classes):
-            pij = self.T[:, q] @ self.crowd_matrix.transpose((1, 0, 2))
-            denom = pij.sum(1)
-            pi[:, q, :] = pij / np.where(denom <= 0, -1e9, denom).reshape(
-                -1, 1
-            )
-        self.rho, self.pi = rho, pi
+        # Aggregate worker votes across all tasks
+        aggregated_votes = np.einsum(
+            "tq, tij -> qj", self.T, self.crowd_matrix
+        )  # Shape: (n_classes, n_classes)
+        print(aggregated_votes, aggregated_votes.shape)
+        denom = aggregated_votes.sum(
+            axis=1, keepdims=True
+        )  # Sum over true classes
+        print(denom)
+        self.shared_pi = np.where(denom > 0, aggregated_votes / denom, 0)
 
     def _m_step_sparse(
         self,
@@ -189,8 +192,8 @@ class DawidSkene(CrowdModel):
         for q in range(self.n_classes):
             pij = self.sparse_T[:, q] @ transposed_sparse_crowd_matrix
             denom = pij.tocsr().sum(1)
-            safe_denom = np.where(denom <= 0, -1e9, denom).reshape(-1, 1)
-            yield pij / safe_denom
+            norm = np.where(denom <= 0, -1e9, denom).reshape(-1, 1)
+            yield pij / norm
 
     def _e_step_sparse(self) -> None:
         """Estimate indicator variables (see eq. 2.5 Dawid and Skene 1979)
@@ -218,25 +221,27 @@ class DawidSkene(CrowdModel):
         )
 
     def _e_step(self) -> None:
-        """Estimate indicator variables (see eq. 2.5 Dawid and Skene 1979)
+        """Estimate indicator variables using a shared confusion matrix"""
 
-        Returns:
-            T: New estimate for indicator variables (n_task, n_worker)
-            denom: value used to compute likelihood easily
-        """
+        # Initialize responsibility matrix
         T = np.zeros((self.n_task, self.n_classes))
-        for i in range(self.n_task):
-            for j in range(self.n_classes):
+
+        for i in range(self.n_task):  # Loop over tasks
+            for j in range(self.n_classes):  # Loop over possible true classes
+                # Compute probability of task i belonging to class j
                 num = (
                     np.prod(
-                        np.power(self.pi[:, j, :], self.crowd_matrix[i, :, :])
-                    )
-                    * self.rho[j]
+                        np.power(
+                            self.shared_pi[j, :], self.crowd_matrix[i, :, :]
+                        )
+                    )  # Apply confusion matrix to responses
+                    * self.rho[j]  # Multiply by class prior
                 )
                 T[i, j] = num
-        self.denom_e_step = T.sum(1, keepdims=True)
-        T = np.where(self.denom_e_step > 0, T / self.denom_e_step, T)
-        self.T = T
+
+        # Normalize T to sum to 1 across classes
+        self.denom_e_step = T.sum(axis=1, keepdims=True)
+        self.T = np.where(self.denom_e_step > 0, T / self.denom_e_step, T)
 
     def log_likelihood(self):
         """Compute log likelihood of the model"""
@@ -350,3 +355,32 @@ class DawidSkene(CrowdModel):
             warnings.warn("Sparse implementation only returns hard labels")
             return self.get_answers()
         return self.T
+
+
+# %%
+votes = {
+    0: {0: 1, 1: 2, 2: 2},
+    1: {0: 6, 1: 2, 3: 2},
+    2: {1: 8, 2: 7, 3: 8},
+    3: {0: 1, 1: 1, 2: 5},
+    4: {2: 4},
+    5: {0: 0, 1: 0, 2: 1, 3: 6},
+    6: {1: 5, 3: 3},
+    7: {0: 3, 2: 6, 3: 4},
+    8: {1: 7, 3: 7},
+    9: {0: 8, 2: 1, 3: 1},
+    10: {0: 0, 1: 0, 2: 1},
+    11: {2: 3},
+    12: {0: 7, 2: 8, 3: 1},
+    13: {1: 3},
+    14: {0: 5, 2: 4, 3: 4},
+    15: {0: 5, 1: 7},
+    16: {0: 0, 1: 4, 3: 4},
+    17: {1: 5, 2: 7, 3: 7},
+    18: {0: 3},
+    19: {1: 7, 2: 7},
+}
+
+
+ds = DawidSkeneShared(answers=votes, n_classes=9, n_workers=4)
+ds.run()
