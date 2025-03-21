@@ -1,4 +1,3 @@
-# %%
 import warnings
 from os import PathLike
 from sys import getsizeof
@@ -8,8 +7,11 @@ import numpy as np
 import sparse as sp
 from annotated_types import Ge
 from loguru import logger
+from numpy.typing import NDArray
 from pydantic import validate_call
 from tqdm.auto import tqdm
+
+from peerannot.models.aggregation.warnings import DidNotConverge
 
 from ..template import AnswersDict, CrowdModel
 
@@ -84,12 +86,12 @@ class DawidSkene(CrowdModel):
         self.exclude_answers()
         if self.sparse:
             self.init_sparse_crowd_matrix()
-            logger.info(
+            logger.debug(
                 f"Sparse Crowd matrix{getsizeof(self.sparse_crowd_matrix)}"
             )
         else:
             self.init_crowd_matrix()
-            logger.info(f"Dense Crowd matrix{getsizeof(self.crowd_matrix)}")
+            logger.debug(f"Dense Crowd matrix{getsizeof(self.crowd_matrix)}")
 
     def exclude_answers(self) -> None:
         answers_modif = {}
@@ -102,9 +104,11 @@ class DawidSkene(CrowdModel):
                     i += 1
             self.answers = answers_modif
 
-    def init_sparse_crowd_matrix(self):
-        """Transform dictionnary of labels to a tensor of size (n_task, n_workers, n_classes)."""
-        # TODO crowd matrix usually will be sparse, maybe there is another, better implementation for it
+    def init_sparse_crowd_matrix(self) -> None:
+        """Transform dictionnary of labels to a tensor of size
+        (n_task, n_workers, n_classes)."""
+        # TODO crowd matrix usually will be sparse, maybe there is another
+        #  better implementation for it
         crowd_matrix = sp.DOK(
             (self.n_task, self.n_workers, self.n_classes), dtype=np.uint16
         )
@@ -113,39 +117,40 @@ class DawidSkene(CrowdModel):
             for worker, label in ans.items():
                 crowd_matrix[task, worker, label] = 1
 
-        logger.info(f"Sparse crowd matrix {getsizeof(crowd_matrix)}")
+        logger.debug(f"Sparse crowd matrix {getsizeof(crowd_matrix)}")
         self.sparse_crowd_matrix = crowd_matrix.to_coo()
 
-    def init_crowd_matrix(self):
-        """Transform dictionnary of labels to a tensor of size (n_task, n_workers, n_classes)."""
+    def init_crowd_matrix(self) -> None:
+        """Transform dictionnary of labels to a tensor of size
+        (n_task, n_workers, n_classes)."""
 
         matrix = np.zeros((self.n_task, self.n_workers, self.n_classes))
         for task, ans in self.answers.items():
             for worker, label in ans.items():
                 matrix[task, worker, label] += 1
 
-        logger.info(f"Dense crowd matrix  {getsizeof(matrix)}")
+        logger.debug(f"Dense crowd matrix  {getsizeof(matrix)}")
         self.crowd_matrix = matrix
 
-    def init_T(self):
+    def init_T(self) -> None:
         """NS initialization"""
         # T shape is n_task, n_workers
         T = self.crowd_matrix.sum(axis=1)
-        logger.info(f"Size of T before calc: {getsizeof(T)}")
+        logger.debug(f"Size of T before calc: {getsizeof(T)}")
 
         tdim = T.sum(1, keepdims=True)
         self.T = np.where(tdim > 0, T / tdim, 0)
-        logger.info(f"Size of T: {getsizeof(self.T)}")
+        logger.debug(f"Size of T: {getsizeof(self.T)}")
 
-    def init_sparse_T(self):
+    def init_sparse_T(self) -> None:
         """NS initialization"""
         # T shape is n_task, n_workers
         sparse_T = self.sparse_crowd_matrix.sum(axis=1)
-        logger.info(f"Size of sparse_T before calc: {getsizeof(sparse_T)}")
+        logger.debug(f"Size of sparse_T before calc: {getsizeof(sparse_T)}")
 
         tdim = sparse_T.sum(1, keepdims=True).todense()
         self.sparse_T = np.where(tdim > 0, sparse_T / tdim, 0)
-        logger.info(f"Size of sparse_T: {getsizeof(self.sparse_T)}")
+        logger.debug(f"Size of sparse_T: {getsizeof(self.sparse_T)}")
 
     def _m_step(
         self,
@@ -169,7 +174,7 @@ class DawidSkene(CrowdModel):
 
     def _m_step_sparse(
         self,
-    ):
+    ) -> Generator[NDArray, None, None]:
         """Maximizing log likelihood (see eq. 2.3 and 2.4 Dawid and Skene 1979)
 
         Returns:
@@ -183,7 +188,7 @@ class DawidSkene(CrowdModel):
         )  # can rho be sparse?
 
         transposed_sparse_crowd_matrix = self.sparse_crowd_matrix.transpose(
-            (1, 0, 2)
+            (1, 0, 2),
         )
         # Compute sparse confusion matrices
         for q in range(self.n_classes):
@@ -238,7 +243,7 @@ class DawidSkene(CrowdModel):
         T = np.where(self.denom_e_step > 0, T / self.denom_e_step, T)
         self.T = T
 
-    def log_likelihood(self):
+    def log_likelihood(self) -> float:
         """Compute log likelihood of the model"""
         return np.log(np.sum(self.denom_e_step))
 
@@ -248,7 +253,7 @@ class DawidSkene(CrowdModel):
         maxiter: Annotated[int, Ge(0)] = 50,
         *,
         verbose: bool = False,
-    ) -> tuple[list[np.float64], int]:
+    ) -> tuple[list[float], int]:
         i = 0
         eps = np.inf
 
@@ -268,8 +273,12 @@ class DawidSkene(CrowdModel):
         pbar.set_description("Finished")
         pbar.close()
         self.c = i
-        if eps > epsilon and verbose:
-            print(f"DS did not converge: err={eps}")
+        if eps > epsilon:
+            warnings.warn(
+                DidNotConverge(self.__class__.__name__, eps, epsilon),
+                stacklevel=2,
+            )
+
         return ll, i
 
     def run_sparse(
@@ -278,7 +287,7 @@ class DawidSkene(CrowdModel):
         maxiter: Annotated[int, Ge(0)] = 50,
         *,
         verbose: bool = False,
-    ) -> tuple[list[np.float64], int]:
+    ) -> tuple[list[float], int]:
         i = 0
         eps = np.inf
 
@@ -297,8 +306,8 @@ class DawidSkene(CrowdModel):
         pbar.set_description("Finished")
         pbar.close()
         self.c = i
-        if eps > epsilon and verbose:
-            print(f"DS did not converge: err={eps}")
+        if eps > epsilon:
+            warnings.warn(str(eps), DidNotConverge, stacklevel=2)
         return ll, i
 
     @validate_call
@@ -308,8 +317,7 @@ class DawidSkene(CrowdModel):
         maxiter: Annotated[int, Ge(0)] = 50,
         *,
         verbose: bool = False,
-    ) -> tuple[list[np.float64], int]:
-        # TODO: implement sparse
+    ) -> tuple[list[float], int]:
         """Run the EM optimization
 
         :param epsilon: stopping criterion (:math:`\\ell_1` norm between two iterates of log likelihood), defaults to 1e-6
@@ -334,19 +342,16 @@ class DawidSkene(CrowdModel):
             verbose=verbose,
         )
 
-    def get_answers(self):
+    def get_answers(self) -> NDArray:
         """Get most probable labels"""
         if self.sparse:
             return np.vectorize(self.inv_labels.get)(
-                sp.argmax(self.sparse_T, axis=1).todense()
+                sp.argmax(self.sparse_T, axis=1).todense(),
             )
         return np.vectorize(self.inv_labels.get)(
-            np.argmax(self.get_probas(), axis=1)
+            np.argmax(self.get_probas(), axis=1),
         )
 
-    def get_probas(self):
+    def get_probas(self) -> NDArray:
         """Get soft labels distribution for each task"""
-        if self.sparse:
-            warnings.warn("Sparse implementation only returns hard labels")
-            return self.get_answers()
         return self.T
