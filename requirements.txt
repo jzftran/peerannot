@@ -17,3 +17,4 @@ pytest-cov
 pytest-timeout
 cffi
 pydantic
+sparse
