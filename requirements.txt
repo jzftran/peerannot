@@ -18,3 +18,4 @@ pytest-timeout
 cffi
 pydantic
 sparse
+loguru

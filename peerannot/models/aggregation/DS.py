@@ -12,8 +12,7 @@ from pydantic import validate_call
 from tqdm.auto import tqdm
 
 from peerannot.models.aggregation.warnings import DidNotConverge
-
-from ..template import AnswersDict, CrowdModel
+from peerannot.models.template import AnswersDict, CrowdModel
 
 FilePathInput = PathLike | str | list[str] | Generator[str, None, None] | None
 
