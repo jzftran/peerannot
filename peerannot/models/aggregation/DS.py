@@ -133,7 +133,7 @@ class DawidSkene(CrowdModel):
 
     def init_T(self) -> None:
         """NS initialization"""
-        # T shape is n_task, n_workers
+        # T shape is n_task, n_classes
         T = self.crowd_matrix.sum(axis=1)
         logger.debug(f"Size of T before calc: {getsizeof(T)}")
 
@@ -143,7 +143,7 @@ class DawidSkene(CrowdModel):
 
     def init_sparse_T(self) -> None:
         """NS initialization"""
-        # T shape is n_task, n_workers
+        # T shape is n_task, n_classes
         sparse_T = self.sparse_crowd_matrix.sum(axis=1)
         logger.debug(f"Size of sparse_T before calc: {getsizeof(sparse_T)}")
 
