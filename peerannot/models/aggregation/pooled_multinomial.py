@@ -1,13 +1,6 @@
-from collections.abc import Generator
-from os import PathLike
-
 import numpy as np
 
 from .DS import DawidSkene
-
-FilePathInput = PathLike | str | list[str] | Generator[str, None, None] | None
-SPARSE_NOT_IMPLEMENTED = "The sparse algorithm for DawidSkeneShared\
-                in the current context is not implemented."
 
 
 class PooledMultinomial(DawidSkene):
@@ -26,14 +19,6 @@ class PooledMultinomial(DawidSkene):
     Estimating:
     - One shared confusion matrix for workers
     """
-
-    def __init__(self, answers, n_workers, n_classes, *, path_remove=None):
-        super().__init__(
-            answers,
-            n_workers,
-            n_classes,
-            path_remove=path_remove,
-        )
 
     def _m_step(
         self,

@@ -1,8 +1,7 @@
-from .DS import DawidSkene
 import warnings
-from os import PathLike
+from collections.abc import Generator
 from sys import getsizeof
-from typing import Annotated, Generator
+from typing import Annotated
 
 import numpy as np
 import sparse as sp
@@ -13,22 +12,19 @@ from pydantic import validate_call
 from tqdm.auto import tqdm
 
 from peerannot.models.aggregation.warnings import DidNotConverge
-from peerannot.models.template import AnswersDict, CrowdModel
+
+from .DS import DawidSkene
 
 
 class DawidSkeneSparse(DawidSkene):
-    def __init__(self, answers, n_workers, n_classes, *, path_remove=None):
-        super().__init__(
-            answers, n_workers, n_classes, path_remove=path_remove
-        )
-
-    def init_crowd_matrix(self) -> None:
+    def _init_crowd_matrix(self) -> None:
         """Transform dictionnary of labels to a tensor of size
         (n_task, n_workers, n_classes)."""
         # TODO crowd matrix usually will be sparse, maybe there is another
         #  better implementation for it
         crowd_matrix = sp.DOK(
-            (self.n_task, self.n_workers, self.n_classes), dtype=np.uint16
+            (self.n_task, self.n_workers, self.n_classes),
+            dtype=np.uint16,
         )
 
         for task, ans in self.answers.items():
@@ -38,7 +34,7 @@ class DawidSkeneSparse(DawidSkene):
         logger.debug(f"Sparse crowd matrix {getsizeof(crowd_matrix)}")
         self.crowd_matrix = crowd_matrix.to_coo()
 
-    def init_T(self) -> None:
+    def _init_T(self) -> None:
         """NS initialization"""
         # T shape is n_task, n_classes
         T = self.crowd_matrix.sum(axis=1)
@@ -98,8 +94,6 @@ class DawidSkeneSparse(DawidSkene):
         self,
         epsilon: Annotated[float, Ge(0)] = 1e-6,
         maxiter: Annotated[int, Ge(0)] = 50,
-        *,
-        verbose: bool = False,
     ) -> tuple[list[float], int]:
         i = 0
         eps = np.inf
@@ -109,9 +103,9 @@ class DawidSkeneSparse(DawidSkene):
         pbar = tqdm(total=maxiter, desc="Dawid and Skene Sparse")
         while i < maxiter and eps > epsilon:
             self._e_step()
-            likeli = self.log_likelihood()
+            likeli = self._log_likelihood()
             ll.append(likeli)
-            if len(ll) >= 2:
+            if i > 0:
                 eps = np.abs(ll[-1] - ll[-2])
             i += 1
             pbar.update(1)

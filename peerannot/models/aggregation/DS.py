@@ -1,7 +1,8 @@
 import warnings
+from collections.abc import Generator
 from os import PathLike
 from sys import getsizeof
-from typing import Annotated, Generator
+from typing import Annotated
 
 import numpy as np
 from annotated_types import Ge
@@ -77,12 +78,12 @@ class DawidSkene(CrowdModel):
         self.path_remove: FilePathInput = path_remove
         self.n_task: int = len(self.answers)
 
-        self.exclude_answers()
+        self._exclude_answers()
 
-        self.init_crowd_matrix()
+        self._init_crowd_matrix()
         logger.debug(f"Dense Crowd matrix{getsizeof(self.crowd_matrix)}")
 
-    def exclude_answers(self) -> None:
+    def _exclude_answers(self) -> None:
         answers_modif = {}
         if self.path_remove is not None:
             to_remove = np.loadtxt(self.path_remove, dtype=int)
@@ -93,7 +94,7 @@ class DawidSkene(CrowdModel):
                     i += 1
             self.answers = answers_modif
 
-    def init_crowd_matrix(self) -> None:
+    def _init_crowd_matrix(self) -> None:
         """Transform dictionnary of labels to a tensor of size
         (n_task, n_workers, n_classes)."""
 
@@ -105,10 +106,10 @@ class DawidSkene(CrowdModel):
         logger.debug(f"Dense crowd matrix  {getsizeof(matrix)}")
         self.crowd_matrix = matrix
 
-    def init_T(self) -> None:
+    def _init_T(self) -> None:  # noqa: N802
         """NS initialization"""
         # T shape is n_task, n_classes
-        T = self.crowd_matrix.sum(axis=1)
+        T = self.crowd_matrix.sum(axis=1)  # noqa: N806
         logger.debug(f"Size of T before calc: {getsizeof(T)}")
 
         tdim = T.sum(1, keepdims=True)
@@ -121,7 +122,8 @@ class DawidSkene(CrowdModel):
         """Maximizing log likelihood (see eq. 2.3 and 2.4 Dawid and Skene 1979)
 
         Returns:
-            :math:`\\rho`: :math:`(\\rho_j)_j` probabilities that instance has true response j if drawn at random (class marginals)
+            :math:`\\rho`: :math:`(\\rho_j)_j` probabilities that instance has
+                true response j if drawn at random (class marginals)
             pi: number of times worker k records l when j is correct
         """
         rho = self.T.sum(0) / self.n_task
@@ -131,7 +133,8 @@ class DawidSkene(CrowdModel):
             pij = self.T[:, q] @ self.crowd_matrix.transpose((1, 0, 2))
             denom = pij.sum(1)
             pi[:, q, :] = pij / np.where(denom <= 0, -1e9, denom).reshape(
-                -1, 1
+                -1,
+                1,
             )
         self.rho, self.pi = rho, pi
 
@@ -142,21 +145,21 @@ class DawidSkene(CrowdModel):
             T: New estimate for indicator variables (n_task, n_worker)
             denom: value used to compute likelihood easily
         """
-        T = np.zeros((self.n_task, self.n_classes))
+        T = np.zeros((self.n_task, self.n_classes))  # noqa: N806
         for i in range(self.n_task):
             for j in range(self.n_classes):
                 num = (
                     np.prod(
-                        np.power(self.pi[:, j, :], self.crowd_matrix[i, :, :])
+                        np.power(self.pi[:, j, :], self.crowd_matrix[i, :, :]),
                     )
                     * self.rho[j]
                 )
                 T[i, j] = num
         self.denom_e_step = T.sum(1, keepdims=True)
-        T = np.where(self.denom_e_step > 0, T / self.denom_e_step, T)
+        T = np.where(self.denom_e_step > 0, T / self.denom_e_step, T)  # noqa: N806
         self.T = T
 
-    def log_likelihood(self) -> float:
+    def _log_likelihood(self) -> float:
         """Compute log likelihood of the model"""
         return np.log(np.sum(self.denom_e_step))
 
@@ -165,8 +168,6 @@ class DawidSkene(CrowdModel):
         self,
         epsilon: Annotated[float, Ge(0)] = 1e-6,
         maxiter: Annotated[int, Ge(0)] = 50,
-        *,
-        verbose: bool = False,
     ) -> tuple[list[float], int]:
         """Run the EM optimization
 
@@ -175,7 +176,6 @@ class DawidSkene(CrowdModel):
         :param maxiter: Maximum number of steps, defaults to 50
         :type maxiter: int, optional
         :param verbose: Verbosity level, defaults to False
-        :type verbose: bool, optional
         :return: Log likelihood values and number of steps taken
         :rtype: (list,int)
         """
@@ -183,15 +183,15 @@ class DawidSkene(CrowdModel):
         i = 0
         eps = np.inf
 
-        self.init_T()
+        self._init_T()
         ll = []
         pbar = tqdm(total=maxiter, desc="Dawid and Skene")
         while i < maxiter and eps > epsilon:
             self._m_step()
             self._e_step()
-            likeli = self.log_likelihood()
+            likeli = self._log_likelihood()
             ll.append(likeli)
-            if len(ll) >= 2:
+            if i > 0:
                 eps = np.abs(ll[-1] - ll[-2])
             i += 1
             pbar.update(1)

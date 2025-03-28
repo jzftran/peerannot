@@ -5,3 +5,6 @@ select = ["ALL"]
 
 [tool.ruff.lint]
 ignore = ["D",]
+
+[tool.mypy]
+exclude = ['venv', '.venv']
