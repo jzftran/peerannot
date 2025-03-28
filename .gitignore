@@ -222,3 +222,5 @@ doc/tutorials/authors_toy.txt
 
 # temp folder
 temp/
+# big data
+*.hdf5
