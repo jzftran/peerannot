@@ -98,7 +98,7 @@ class DawidSkeneSparse(DawidSkene):
         i = 0
         eps = np.inf
 
-        self.init_T()
+        self._init_T()
         ll = []
         pbar = tqdm(total=maxiter, desc="Dawid and Skene Sparse")
         while i < maxiter and eps > epsilon:
