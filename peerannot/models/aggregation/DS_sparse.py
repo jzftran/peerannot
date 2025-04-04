@@ -114,7 +114,10 @@ class DawidSkeneSparse(DawidSkene):
         pbar.close()
         self.c = i
         if eps > epsilon:
-            warnings.warn(str(eps), DidNotConverge, stacklevel=2)
+            warnings.warn(
+                DidNotConverge(self.__class__.__name__, eps, epsilon),
+                stacklevel=2,
+            )
         return ll, i
 
     def get_answers(self) -> NDArray:
