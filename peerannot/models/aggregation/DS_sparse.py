@@ -1,12 +1,12 @@
+from sys import getsizeof
 import warnings
 from collections.abc import Generator
-from sys import getsizeof
 from typing import Annotated
 
+from loguru import logger
 import numpy as np
 import sparse as sp
 from annotated_types import Ge
-from loguru import logger
 from numpy.typing import NDArray
 from pydantic import validate_call
 from tqdm.auto import tqdm
@@ -24,25 +24,25 @@ class DawidSkeneSparse(DawidSkene):
         #  better implementation for it
         crowd_matrix = sp.DOK(
             (self.n_task, self.n_workers, self.n_classes),
-            dtype=np.uint16,
+            dtype=bool,
         )
 
         for task, ans in self.answers.items():
             for worker, label in ans.items():
                 crowd_matrix[task, worker, label] = 1
 
-        logger.debug(f"Sparse crowd matrix {getsizeof(crowd_matrix)}")
         self.crowd_matrix = crowd_matrix.to_coo()
+        logger.debug(
+            f"Size of sparse crowd matrix: {getsizeof(self.crowd_matrix)}"
+        )
 
     def _init_T(self) -> None:
         """NS initialization"""
         # T shape is n_task, n_classes
         T = self.crowd_matrix.sum(axis=1)
-        logger.debug(f"Size of T before calc: {getsizeof(T)}")
 
         tdim = T.sum(1, keepdims=True).todense()
         self.T = np.where(tdim > 0, T / tdim, 0)
-        logger.debug(f"Size of T: {getsizeof(self.T)}")
 
     def _m_step_sparse(
         self,
@@ -55,7 +55,7 @@ class DawidSkeneSparse(DawidSkene):
         """
         # pi could be bigger, at least inner 2d matrices should be implemented as sparse, probably the easiest way to create is to use dok array
 
-        self.rho = self.T.sum(axis=0) / self.n_task  # can rho be sparse?
+        self.rho = self.T.sum(axis=0) / self.n_task
 
         transposed_sparse_crowd_matrix = self.crowd_matrix.transpose(
             (1, 0, 2),
