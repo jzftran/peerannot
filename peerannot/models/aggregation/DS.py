@@ -1,12 +1,12 @@
+from sys import getsizeof
 import warnings
 from collections.abc import Generator
 from os import PathLike
-from sys import getsizeof
 from typing import Annotated
 
+from loguru import logger
 import numpy as np
 from annotated_types import Ge
-from loguru import logger
 from numpy.typing import NDArray
 from pydantic import validate_call
 from tqdm.auto import tqdm
@@ -81,7 +81,6 @@ class DawidSkene(CrowdModel):
         self._exclude_answers()
 
         self._init_crowd_matrix()
-        logger.debug(f"Dense Crowd matrix{getsizeof(self.crowd_matrix)}")
 
     def _exclude_answers(self) -> None:
         answers_modif = {}
@@ -98,23 +97,24 @@ class DawidSkene(CrowdModel):
         """Transform dictionnary of labels to a tensor of size
         (n_task, n_workers, n_classes)."""
 
-        matrix = np.zeros((self.n_task, self.n_workers, self.n_classes))
+        matrix = np.zeros(
+            (self.n_task, self.n_workers, self.n_classes), dtype=bool
+        )
         for task, ans in self.answers.items():
             for worker, label in ans.items():
-                matrix[task, worker, label] += 1
-
-        logger.debug(f"Dense crowd matrix  {getsizeof(matrix)}")
+                matrix[task, worker, label] = 1
         self.crowd_matrix = matrix
+        logger.debug(
+            f"Size of dense crowd matrix: {getsizeof(self.crowd_matrix)}"
+        )
 
     def _init_T(self) -> None:  # noqa: N802
         """NS initialization"""
         # T shape is n_task, n_classes
         T = self.crowd_matrix.sum(axis=1)  # noqa: N806
-        logger.debug(f"Size of T before calc: {getsizeof(T)}")
 
         tdim = T.sum(1, keepdims=True)
         self.T = np.where(tdim > 0, T / tdim, 0)
-        logger.debug(f"Size of T: {getsizeof(self.T)}")
 
     def _m_step(
         self,
