@@ -185,7 +185,7 @@ class DawidSkene(CrowdModel):
 
         self._init_T()
         ll = []
-        pbar = tqdm(total=maxiter, desc="Dawid and Skene")
+        pbar = tqdm(total=maxiter, desc=self.__class__.__name__)
         while i < maxiter and eps > epsilon:
             self._m_step()
             self._e_step()
