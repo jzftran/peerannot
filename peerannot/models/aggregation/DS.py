@@ -1,12 +1,12 @@
-from sys import getsizeof
 import warnings
 from collections.abc import Generator
 from os import PathLike
-from typing import Annotated
+from sys import getsizeof
+from typing import Annotated, Any, Self
 
-from loguru import logger
 import numpy as np
 from annotated_types import Ge
+from loguru import logger
 from numpy.typing import NDArray
 from pydantic import validate_call
 from tqdm.auto import tqdm
@@ -93,19 +93,41 @@ class DawidSkene(CrowdModel):
                     i += 1
             self.answers = answers_modif
 
+    @classmethod
+    def from_crowd_matrix(
+        cls,
+        crowd_matrix: np.ndarray,
+        n_workers: int = 1,
+        n_classes: int = 1,
+        **kwargs: dict[str, Any],
+    ) -> Self:
+        # todo@jzftran: do thin constructor resistant, take care of crowd_matrix content and shape, check CrowdModel
+        instance = cls(
+            answers={0: {0: 0}},
+            n_workers=n_workers,
+            n_classes=n_classes,
+            **kwargs,
+        )
+        instance.crowd_matrix = crowd_matrix
+        instance.n_task, instance.n_workers, instance.n_classes = (
+            crowd_matrix.shape
+        )
+        return instance
+
     def _init_crowd_matrix(self) -> None:
         """Transform dictionnary of labels to a tensor of size
         (n_task, n_workers, n_classes)."""
 
         matrix = np.zeros(
-            (self.n_task, self.n_workers, self.n_classes), dtype=bool
+            (self.n_task, self.n_workers, self.n_classes),
+            dtype=bool,
         )
         for task, ans in self.answers.items():
             for worker, label in ans.items():
                 matrix[task, worker, label] = 1
         self.crowd_matrix = matrix
         logger.debug(
-            f"Size of dense crowd matrix: {getsizeof(self.crowd_matrix)}"
+            f"Size of dense crowd matrix: {getsizeof(self.crowd_matrix)}",
         )
 
     def _init_T(self) -> None:  # noqa: N802
