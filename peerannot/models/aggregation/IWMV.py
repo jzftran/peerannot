@@ -46,15 +46,6 @@ class IWMV(CrowdModel):
         self.sparse = sparse
         self.original_answers = self.answers
         self.n_workers = kwargs["n_workers"]
-        if kwargs.get("path_remove", None):
-            to_remove = np.loadtxt(kwargs["path_remove"], dtype=int)
-            self.answers_modif = {}
-            i = 0
-            for key, val in self.answers.items():
-                if int(key) not in to_remove[:, 1]:
-                    self.answers_modif[i] = val
-                    i += 1
-            self.answers = self.answers_modif
 
     def compute_baseline(self, weight=None):
         """Compute label frequency per task"""

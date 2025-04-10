@@ -1,6 +1,4 @@
 import warnings
-from collections.abc import Generator
-from os import PathLike
 from sys import getsizeof
 from typing import Annotated, Any, Self
 
@@ -12,9 +10,7 @@ from pydantic import validate_call
 from tqdm.auto import tqdm
 
 from peerannot.models.aggregation.warnings import DidNotConverge
-from peerannot.models.template import AnswersDict, CrowdModel
-
-FilePathInput = PathLike | str | list[str] | Generator[str, None, None] | None
+from peerannot.models.template import AnswersDict, CrowdModel, FilePathInput
 
 
 class DawidSkene(CrowdModel):
@@ -39,8 +35,6 @@ class DawidSkene(CrowdModel):
         answers: AnswersDict,
         n_workers: Annotated[int, Ge(1)],
         n_classes: Annotated[int, Ge(1)],
-        *,
-        path_remove: FilePathInput = None,
     ) -> None:
         r"""Dawid and Skene strategy: estimate confusion matrix for each worker.
 
@@ -75,23 +69,9 @@ class DawidSkene(CrowdModel):
         super().__init__(answers)
         self.n_workers: int = n_workers
         self.n_classes: int = n_classes
-        self.path_remove: FilePathInput = path_remove
         self.n_task: int = len(self.answers)
 
-        self._exclude_answers()
-
         self._init_crowd_matrix()
-
-    def _exclude_answers(self) -> None:
-        answers_modif = {}
-        if self.path_remove is not None:
-            to_remove = np.loadtxt(self.path_remove, dtype=int)
-            i = 0
-            for key, val in self.answers.items():
-                if int(key) not in to_remove[:, 1]:
-                    answers_modif[i] = val
-                    i += 1
-            self.answers = answers_modif
 
     @classmethod
     def from_crowd_matrix(

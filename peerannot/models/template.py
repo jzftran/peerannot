@@ -4,21 +4,26 @@ Parent template to all strategies
 =================================
 """
 
-from typing import Any
-from pydantic import BaseModel, Field
-
+from collections.abc import Generator
+from os import PathLike
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
+
 # XXX TODO: clean this file and depend less on it
 
 # TODO@jzftran: Are answers always like this?
 AnswersDict = dict[str | int, dict[str | int, int]]
+FilePathInput = PathLike | str | list[str] | Generator[str, None, None] | None
 
 
 class CrowdModel:
-    def __init__(self, answers: AnswersDict) -> None:
+    def __init__(
+        self,
+        answers: AnswersDict,
+        path_remove: FilePathInput = None,
+    ) -> None:
         self.answers = answers
         transformed_answers = self.transform(answers)
         self.answers: dict[int, Any] = {
@@ -28,6 +33,21 @@ class CrowdModel:
                 key=lambda item: int(item[0]),
             )
         }
+
+        self.path_remove: FilePathInput = path_remove
+        if self.path_remove:
+            self._exclude_answers()
+
+    def _exclude_answers(self) -> None:
+        answers_modif = {}
+        if self.path_remove is not None:
+            to_remove = np.loadtxt(self.path_remove, dtype=int)
+            i = 0
+            for key, val in self.answers.items():
+                if int(key) not in to_remove[:, 1]:
+                    answers_modif[i] = val
+                    i += 1
+            self.answers = answers_modif
 
     # TODO@jzftran: can we define array size?
     def get_tasks(self) -> npt.NDArray[Any]:

@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import numpy as np
 from collections.abc import Iterable
-from ..template import CrowdModel
+from ..template import CrowdModel, FilePathInput
 from pathlib import Path
 from tqdm.auto import tqdm
 import json
@@ -87,15 +87,24 @@ class NoiseAdaptationLayer(nn.Module):
             torch.eye(n_class, n_class) * 2, requires_grad=True
         )
         self.local_confusion_matrices = nn.Parameter(
-            torch.stack([torch.eye(n_class, n_class) * 2 for _ in range(n_annotator)]),
+            torch.stack(
+                [torch.eye(n_class, n_class) * 2 for _ in range(n_annotator)]
+            ),
             requires_grad=True,
         )
 
     def forward(self, f, w):
-        global_prob = torch.einsum("ij,jk->ik", f, self.global_confusion_matrix)
-        local_probs = torch.einsum("ik,jkl->ijl", f, self.local_confusion_matrices)
+        global_prob = torch.einsum(
+            "ij,jk->ik", f, self.global_confusion_matrix
+        )
+        local_probs = torch.einsum(
+            "ik,jkl->ijl", f, self.local_confusion_matrices
+        )
 
-        h = w[:, :, None] * global_prob[:, None, :] + (1 - w[:, :, None]) * local_probs
+        h = (
+            w[:, :, None] * global_prob[:, None, :]
+            + (1 - w[:, :, None]) * local_probs
+        )
 
         return h
 
@@ -137,7 +146,9 @@ class CoNAL_net(nn.Module):
             input_dim, annotator_dim, embedding_dim
         )
         self.classifier = classifier
-        self.noise_adaptation_layer = NoiseAdaptationLayer(n_class, n_annotator)
+        self.noise_adaptation_layer = NoiseAdaptationLayer(
+            n_class, n_annotator
+        )
 
     def forward(self, x, annotator=None):
         """If no worker is associated (test phase), returns the backbone prediction.
@@ -254,15 +265,7 @@ class CoNAL(CrowdModel):
             self.answers = json.load(ans)
         super().__init__(self.answers)
         self.answers_orig = self.answers
-        if kwargs.get("path_remove", None):
-            to_remove = np.loadtxt(kwargs["path_remove"], dtype=int)
-            self.answers_modif = {}
-            i = 0
-            for key, val in self.answers.items():
-                if int(key) not in to_remove[:, 1]:
-                    self.answers_modif[i] = val
-                    i += 1
-            self.answers = self.answers_modif
+
         kwargs["labels"] = None  # to prevent any loading of labels
         self.trainset, self.valset, self.testset = load_all_data(
             self.tasks_path, labels_path=None, **kwargs
@@ -307,15 +310,18 @@ class CoNAL(CrowdModel):
         self.trainset.samples = ll
         self.trainset.targets = targets
 
-        self.trainloader, self.testloader = DataLoader(
-            self.trainset,
-            shuffle=True,
-            batch_size=kwargs["batch_size"],
-            num_workers=kwargs["num_workers"],
-            pin_memory=(torch.cuda.is_available()),
-        ), DataLoader(
-            self.testset,
-            batch_size=kwargs["batch_size"],
+        self.trainloader, self.testloader = (
+            DataLoader(
+                self.trainset,
+                shuffle=True,
+                batch_size=kwargs["batch_size"],
+                num_workers=kwargs["num_workers"],
+                pin_memory=(torch.cuda.is_available()),
+            ),
+            DataLoader(
+                self.testset,
+                batch_size=kwargs["batch_size"],
+            ),
         )
         print(f"Train set: {len(self.trainloader.dataset)} tasks")
         print(f"Test set: {len(self.testloader.dataset)} tasks")
@@ -411,7 +417,9 @@ class CoNAL(CrowdModel):
                 vprint = v
             print(f"- {k}: {vprint}")
         (self.tasks_path / "results").mkdir(parents=True, exist_ok=True)
-        with open(self.tasks_path / "results" / f"{self.output_name}.json", "w") as f:
+        with open(
+            self.tasks_path / "results" / f"{self.output_name}.json", "w"
+        ) as f:
             json.dump(logger, f, indent=3, ensure_ascii=False)
         print(
             f"Results stored in {self.tasks_path / 'results' / f'{self.output_name}.json'}"
