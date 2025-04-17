@@ -67,3 +67,59 @@ class DiagonalMultinomial(DawidSkene):
 
         self.denom_e_step = T.sum(1, keepdims=True)
         self.T = np.where(self.denom_e_step > 0, T / self.denom_e_step, T)
+
+
+class VectorizedDiagonalMultinomial(DiagonalMultinomial):
+    def _m_step(self) -> None:
+        """Maximizing log likelihood with only diagonal elements of pi."""
+        rho = self.T.sum(0) / self.n_task
+        pij = np.einsum("tq,tiq->iq", self.T, self.crowd_matrix)
+        denom = np.einsum("tq, tij -> iq", self.T, self.crowd_matrix)
+        pi = np.where(denom > 0, pij / denom, 0)
+        # pi shape (n_workers, n_classes)
+        pi_non_diag_values = (np.ones_like(pi) - pi) / (self.n_classes - 1)
+
+        self.rho, self.pi, self.pi_non_diag_values = (
+            rho,
+            pi,
+            pi_non_diag_values,
+        )
+
+    def _e_step(self) -> None:
+        """Vectorized implementation of e-step without worker loops."""
+        # Compute diagonal contributions
+        # shape: (n_task, n_workers, n_classes)
+        diag_contrib = np.power(
+            self.pi[np.newaxis, :, :],  # (1, n_workers, n_classes)
+            self.crowd_matrix,  # (n_task, n_workers, n_classes)
+        )
+
+        # Compute off-diagonal contributions
+        # For each class j, we need to multiply pi_non_diag_values[k,j]^worker_labels[l] for all l != j
+        mask = 1 - np.eye(self.n_classes)  # (n_casses, n_classes)
+
+        # shape: (n_task, n_workers, n_classes, n_classes)
+        off_diag_powers = np.power(
+            self.pi_non_diag_values[
+                np.newaxis,
+                :,
+                np.newaxis,
+                :,
+            ],  # (1, n_workers, 1, n_classes)
+            self.crowd_matrix[:, :, :, np.newaxis]
+            * mask[np.newaxis, np.newaxis, :, :],
+        )
+
+        off_diag_contrib = np.prod(
+            off_diag_powers,
+            axis=2,
+        )  # (n_task, n_workers, n_classes)
+
+        worker_probs = diag_contrib * off_diag_contrib
+
+        T = (
+            np.prod(worker_probs, axis=1) * self.rho[np.newaxis, :]
+        )  # (n_task, n_classes)
+
+        self.denom_e_step = T.sum(axis=1, keepdims=True)
+        self.T = np.where(self.denom_e_step > 0, T / self.denom_e_step, T)
