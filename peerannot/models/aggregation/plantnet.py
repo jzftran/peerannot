@@ -139,15 +139,6 @@ class PlantNet(CrowdModel):
             )
         else:
             self.path_save = None
-        if kwargs.get("path_remove"):
-            to_remove = np.loadtxt(kwargs["path_remove"], dtype=int)
-            self.answers_modif = {}
-            i = 0
-            for key, val in self.answers.items():
-                if int(key) not in to_remove[:, 1]:
-                    self.answers_modif[i] = val
-                    i += 1
-            self.answers = self.answers_modif
 
     def get_wmv(self, weights):
         """Compute weighted majority vote
