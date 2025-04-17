@@ -26,7 +26,8 @@ class PooledMultinomial(DawidSkene):
         """Maximizing log likelihood (see eq. 2.3 and 2.4 Dawid and Skene 1979)
 
         Returns:
-            :math:`\\rho`: :math:`(\\rho_j)_j` probabilities that instance has true response j if drawn at random (class marginals)
+            :math:`\\rho`: :math:`(\\rho_j)_j` probabilities that instance has
+                true response j if drawn at random (class marginals)
             pi: number of times worker k records l when j is correct
         """
         # TODO:@jzftran adapt docstring
