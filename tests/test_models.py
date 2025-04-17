@@ -21,10 +21,10 @@ ANSWERS = load_json(dir_toydata / "answers.json")
 
 def test_mv():
     sparse = [True, False]
-    from peerannot.models import MV
+    from peerannot.models import MajorityVoting
 
     for sparse_ in sparse:
-        mv = MV(ANSWERS, n_classes=2, sparse=sparse_)
+        mv = MajorityVoting(ANSWERS, n_classes=2, sparse=sparse_)
         y = mv.get_answers()
         expected = np.array([1, 0, 1])
         assert all([e == y_ for e, y_ in zip(expected, y)])
@@ -72,7 +72,8 @@ def test_wawa():
         y = wawa.get_answers()
         expected = np.array([1, 0, 1])
         assert np.isclose(
-            (wawa.worker_score - np.array([1 / 2, 1, 1, 1 / 2])).sum(), 0,
+            (wawa.worker_score - np.array([1 / 2, 1, 1, 1 / 2])).sum(),
+            0,
         )
         assert all([e == y_ for e, y_ in zip(expected, y)])
         # assert True == False
@@ -88,7 +89,8 @@ def test_IWMV():
         y = wawa_it.get_answers()
         expected = np.array([1, 0, 1])
         assert np.isclose(
-            (wawa_it.worker_score - np.array([1 / 2, 1, 1, 1 / 2])).sum(), 0,
+            (wawa_it.worker_score - np.array([1 / 2, 1, 1, 1 / 2])).sum(),
+            0,
         )
         assert all([e == y_ for e, y_ in zip(expected, y)])
 
@@ -108,7 +110,10 @@ def test_glad():
     from peerannot.models import GLAD
 
     glad = GLAD(
-        ANSWERS, n_classes=2, n_workers=4, dataset=dir_toydata / "temp",
+        ANSWERS,
+        n_classes=2,
+        n_workers=4,
+        dataset=dir_toydata / "temp",
     )
     glad.run()
     y = glad.get_answers()

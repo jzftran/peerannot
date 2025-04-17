@@ -4,7 +4,7 @@ from .aggregation.dawid_skene import DawidSkene
 from .aggregation.DS_clust import DawidSkeneClust
 from .aggregation.GLAD import GLAD
 from .aggregation.IWMV import IWMV
-from .aggregation.MV import MV
+from .aggregation.majority_voting import MajorityVoting
 from .aggregation.NaiveSoft import NaiveSoft
 from .aggregation.plantnet import PlantNet
 from .aggregation.twothird import TwoThird
@@ -19,7 +19,7 @@ from .identification.WAUM import WAUM
 from .identification.WAUM_perworker import WAUM_perworker
 
 agg_strategies = {
-    "MV": MV,
+    "majority_voting": MajorityVoting,
     "NaiveSoft": NaiveSoft,
     "dawid_skene": DawidSkene,
     "DSWC": DawidSkeneClust,

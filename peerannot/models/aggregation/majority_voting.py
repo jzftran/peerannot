@@ -4,7 +4,7 @@ from tqdm.auto import tqdm
 from ..template import CrowdModel
 
 
-class MV(CrowdModel):
+class MajorityVoting(CrowdModel):
     """
     =========================
     Majority voting
