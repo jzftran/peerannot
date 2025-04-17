@@ -51,3 +51,18 @@ class PoooledMultinomialBinary(DawidSkene):
 
         self.denom_e_step = T.sum(axis=1, keepdims=True)
         self.T = np.where(self.denom_e_step > 0, T / self.denom_e_step, T)
+
+
+class VectorizedPoooledMultinomialBinary(PoooledMultinomialBinary):
+    def _e_step(self):
+        n_i = self.n_il.sum(axis=1, keepdims=True)
+
+        diag_contrib = self.alpha**self.n_il
+
+        off_diag_factor = (1 - self.alpha) / (self.n_classes - 1)
+        off_diag_contrib = off_diag_factor ** (n_i - self.n_il)
+
+        T = diag_contrib * off_diag_contrib * self.rho[np.newaxis, :]
+
+        self.denom_e_step = T.sum(axis=1, keepdims=True)
+        self.T = np.where(self.denom_e_step > 0, T / self.denom_e_step, T)
