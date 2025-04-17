@@ -1,8 +1,9 @@
 import json
-from pathlib import Path
-import numpy as np
-from urllib import request
 import tarfile
+from pathlib import Path
+from urllib import request
+
+import numpy as np
 
 
 class LabelMe:
@@ -55,7 +56,7 @@ class LabelMe:
 
         print("Created:")
         for set, path in zip(
-            ("train", "val", "test"), [train_path, valid_path, test_path]
+            ("train", "val", "test"), [train_path, valid_path, test_path],
         ):
             print(f"- {set}: {path}")
         self.get_crowd_labels()

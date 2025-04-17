@@ -1,6 +1,8 @@
-from ..template import CrowdModel
 import numpy as np
+
 from peerannot.models.aggregation.dawid_skene import DawidSkene
+
+from ..template import CrowdModel
 
 
 class WDS(CrowdModel):
@@ -17,7 +19,7 @@ class WDS(CrowdModel):
 
         .. math::
 
-            \\mathrm{WDS}(i, \\mathcal{D}) = \\underset{k\in[K]}{\mathrm{argmax}} \\sum_{j\in\mathcal{A}(x_i)}\\pi_{k,k}^{(j)}\\mathbf{1}(y_i^{(j)} = k)
+            \\mathrm{WDS}(i, \\mathcal{D}) = \\underset{k\\in[K]}{\\mathrm{argmax}} \\sum_{j\\in\\mathcal{A}(x_i)}\\pi_{k,k}^{(j)}\\mathbf{1}(y_i^{(j)} = k)
 
         :param answers: Dictionary of workers answers with format
 
@@ -71,5 +73,5 @@ class WDS(CrowdModel):
         :rtype: numpy.ndarray
         """
         return np.vectorize(self.inv_labels.get)(
-            np.argmax(self.get_probas(), axis=1)
+            np.argmax(self.get_probas(), axis=1),
         )

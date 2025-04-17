@@ -277,7 +277,7 @@ class PlantNet(CrowdModel):
                             if valid[int(task_id)] == 1:
                                 if (
                                     dico_labs_workers[int(worker)].get(
-                                        lab_worker, None
+                                        lab_worker, None,
                                     )
                                     is None
                                 ):
@@ -291,7 +291,7 @@ class PlantNet(CrowdModel):
                     if lab_worker == label_task:
                         if (
                             dico_labs_workers[int(worker)].get(
-                                lab_worker, None
+                                lab_worker, None,
                             )
                             is None
                         ):

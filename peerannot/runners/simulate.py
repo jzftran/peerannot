@@ -1,6 +1,7 @@
-import click
-from pathlib import Path
 import json
+from pathlib import Path
+
+import click
 import numpy as np
 
 from peerannot.helpers.simulations_strategies import simulation_strategies
@@ -109,5 +110,5 @@ def simulate(**kwargs):
         f"""
     Saved answers at {path_ / 'answers.json'} \n
     Saved ground truth at {path_ / 'ground_truth.npy'}
-    """
+    """,
     )

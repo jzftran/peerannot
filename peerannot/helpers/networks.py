@@ -1,6 +1,6 @@
 import torch
-import torch.nn as nn
 import torchvision
+from torch import nn
 
 
 def get_all_models():
@@ -19,7 +19,7 @@ class Classifier_labelme(nn.Module):
         self.n_class = n_class
 
         self.backbone = torchvision.models.vgg16_bn(
-            weights=torchvision.models.VGG16_BN_Weights.DEFAULT
+            weights=torchvision.models.VGG16_BN_Weights.DEFAULT,
         )
         self.backbone.classifier = nn.Sequential(
             nn.Linear(512 * 7 * 7, self.n_units),
@@ -38,7 +38,7 @@ class Classifier_labelme(nn.Module):
 
 
 def networks(
-    name, n_classes, n_params=None, pretrained=False, cifar=False, freeze=False
+    name, n_classes, n_params=None, pretrained=False, cifar=False, freeze=False,
 ):
     """Load model as pytorch module
 

@@ -1,10 +1,12 @@
 # based on https://benchopt.github.io CLI
-import click
-from pathlib import Path
+import ast
 import json
 import re
-import ast
+from pathlib import Path
+
+import click
 import numpy as np
+
 import peerannot.models as pmod
 
 # import peerannot.helpers as phelp
@@ -39,7 +41,6 @@ def agginfo():
     for agg in agg_deep_strategies.keys():
         print(f"- {agg}")
     print("-" * 10)
-    return
 
 
 @run.command(help="Crowdsourcing strategy using deep learning models")
@@ -69,7 +70,7 @@ def agginfo():
     help="Deep learning strategy",
 )
 @click.option(
-    "--model", type=str, default="resnet18", help="Neural network to train on"
+    "--model", type=str, default="resnet18", help="Neural network to train on",
 )
 @click.option(
     "--answers",
@@ -89,7 +90,7 @@ def agginfo():
 @click.option("--lr", type=float, default=0.1, help="Learning rate")
 @click.option("--momentum", type=float, default=0.9, help="Momentum for the optimizer")
 @click.option(
-    "--decay", type=float, default=5e-4, help="Weight decay for the optimizer"
+    "--decay", type=float, default=5e-4, help="Weight decay for the optimizer",
 )
 @click.option(
     "--scheduler",
@@ -108,7 +109,7 @@ def agginfo():
 @click.option(
     "--n-params",
     type=int,
-    default=int(32 * 32 * 3),
+    default=(32 * 32 * 3),
     help="Number of parameters for the logistic regression only",
 )
 @click.option(
@@ -162,7 +163,7 @@ def aggregate_deep(**kwargs):
     print("Running the following configuration:")
     print("-" * 10)
     print(
-        f"- Data at {kwargs['dataset']} will be saved with prefix {kwargs['output_name']}"
+        f"- Data at {kwargs['dataset']} will be saved with prefix {kwargs['output_name']}",
     )
     print(f"- number of classes: {kwargs['n_classes']}")
     for key, value in kwargs.items():
@@ -172,7 +173,7 @@ def aggregate_deep(**kwargs):
         kwargs["metadata_path"] = Path(kwargs["dataset"]) / "metadata.json"
     else:
         kwargs["metadata_path"] = Path(["metadata_path"]).resolve()
-    with open(kwargs["metadata_path"], "r") as metadata:
+    with open(kwargs["metadata_path"]) as metadata:
         metadata = json.load(metadata)
     kwargs["n_workers"] = metadata["n_workers"]
 
@@ -186,7 +187,7 @@ def aggregate_deep(**kwargs):
         )
     else:
         raise NotImplementedError(
-            "Not implemented yet, sorry, maybe a simple `peerannot aggregate` is enough ;)"
+            "Not implemented yet, sorry, maybe a simple `peerannot aggregate` is enough ;)",
         )
     strat.run(**kwargs)
 
@@ -245,9 +246,9 @@ def aggregate(**kwargs):
     else:
         kwargs["metadata_path"] = Path(["metadata_path"]).resolve()
     check_dataset(kwargs["dataset"], kwargs["metadata_path"])
-    with open(kwargs["dataset"] / kwargs["answers_file"], "r") as answers:
+    with open(kwargs["dataset"] / kwargs["answers_file"]) as answers:
         answers = json.load(answers)
-    with open(kwargs["metadata_path"], "r") as metadata:
+    with open(kwargs["metadata_path"]) as metadata:
         metadata = json.load(metadata)
     kwargs["n_workers"] = metadata["n_workers"]
     strat_name, options = get_options(kwargs["strategy"])
@@ -260,7 +261,7 @@ def aggregate(**kwargs):
         strat.run()
     else:
         raise ValueError(
-            f"Strategy {strat_name} is not one of {list(agg_strategies.keys())}"
+            f"Strategy {strat_name} is not one of {list(agg_strategies.keys())}",
         )
     filename = f"labels_{metadata['name']}_{kwargs['strategy'].lower()}"
     if kwargs["hard"]:
@@ -281,24 +282,23 @@ def get_options(strat):
 
     if len(options) == 0:
         return strat_name, {}
-    elif len(options) > 1:
+    if len(options) > 1:
         raise ValueError("Only one set of brackets is allowed")
-    else:
-        match = options[0]
-        match = match[1:-1]  # remove brackets
-        all_options = re.findall(r"'[^'\"]*'", match)
-        all_options += re.findall(r'"[^\'"]*"', match)
-        all_options += re.findall(
-            r"(?<![a-zA-Z0-9_])[+-]?[0-9]+[.]?[0-9]*[eE][-+]?[0-9]+", match
-        )
-        for oo in all_options:
-            match = match.replace(oo, str(hash(oo)))
-        match = re.sub(r"[a-zA-Z][a-zA-Z0-9._-]*", r"'\g<0>'", match)
-        for oo in all_options:
-            match = match.replace(str(hash(oo)), oo)
-        match = "{" + match.replace("=", ":") + "}"
-        for token in ["True", "False", "None"]:
-            match = match.replace(f'"{token}"', token)
-            match = match.replace(f"'{token}'", token)
-        result = ast.literal_eval(match)
+    match = options[0]
+    match = match[1:-1]  # remove brackets
+    all_options = re.findall(r"'[^'\"]*'", match)
+    all_options += re.findall(r'"[^\'"]*"', match)
+    all_options += re.findall(
+        r"(?<![a-zA-Z0-9_])[+-]?[0-9]+[.]?[0-9]*[eE][-+]?[0-9]+", match,
+    )
+    for oo in all_options:
+        match = match.replace(oo, str(hash(oo)))
+    match = re.sub(r"[a-zA-Z][a-zA-Z0-9._-]*", r"'\g<0>'", match)
+    for oo in all_options:
+        match = match.replace(str(hash(oo)), oo)
+    match = "{" + match.replace("=", ":") + "}"
+    for token in ["True", "False", "None"]:
+        match = match.replace(f'"{token}"', token)
+        match = match.replace(f"'{token}'", token)
+    result = ast.literal_eval(match)
     return strat_name, result

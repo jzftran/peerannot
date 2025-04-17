@@ -1,9 +1,10 @@
 # based on https://benchopt.github.io CLI
-import click
-from pathlib import Path
 import importlib.util
 import inspect
 import sys
+from pathlib import Path
+
+import click
 
 datasets = click.Group(
     name="Running peerannot datasets",

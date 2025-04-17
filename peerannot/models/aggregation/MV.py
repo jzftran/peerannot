@@ -1,6 +1,7 @@
-from ..template import CrowdModel
 import numpy as np
 from tqdm.auto import tqdm
+
+from ..template import CrowdModel
 
 
 class MV(CrowdModel):
@@ -16,7 +17,7 @@ class MV(CrowdModel):
 
         .. math::
 
-            \mathrm{MV}(i, \mathcal{D}) = \\underset{k\in[K]}{\mathrm{argmax}} \sum_{j\in\mathcal{A}(x_i)}\mathbf{1}(y_i^{(j)} = k)
+            \\mathrm{MV}(i, \\mathcal{D}) = \\underset{k\\in[K]}{\\mathrm{argmax}} \\sum_{j\\in\\mathcal{A}(x_i)}\\mathbf{1}(y_i^{(j)} = k)
 
         :param answers: Dictionary of workers answers with format
 
@@ -58,7 +59,7 @@ class MV(CrowdModel):
             self.compute_baseline()
             ans = [
                 np.random.choice(
-                    np.flatnonzero(self.baseline[i] == self.baseline[i].max())
+                    np.flatnonzero(self.baseline[i] == self.baseline[i].max()),
                 )
                 for i in range(len(self.answers))
             ]
@@ -68,7 +69,7 @@ class MV(CrowdModel):
                 task = self.answers[task_id]
                 count = np.bincount(np.array(list(task.values())))
                 ans[int(task_id)] = np.random.choice(
-                    np.flatnonzero(count == count.max())
+                    np.flatnonzero(count == count.max()),
                 )
         self.ans = ans
         return np.vectorize(self.inv_labels.get)(np.array(ans))

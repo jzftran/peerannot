@@ -79,7 +79,7 @@ class DawidSkene(CrowdModel):
         crowd_matrix: np.ndarray,
         **kwargs: dict[str, Any],
     ) -> Self:
-        # todo@jzftran: do thin constructor resistant, take care of crowd_matrix content and shape, check CrowdModel
+        # TODO@jzftran: do thin constructor resistant, take care of crowd_matrix content and shape, check CrowdModel
         n_task, n_workers, n_classes = crowd_matrix.shape
 
         instance = cls(

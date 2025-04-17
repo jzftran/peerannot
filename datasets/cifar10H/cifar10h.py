@@ -1,11 +1,12 @@
 import json
-from torchvision.utils import save_image
-import torchvision
-import torchvision.transforms as transforms
-import pandas as pd
-import pooch
 import zipfile
 from pathlib import Path
+
+import pandas as pd
+import pooch
+import torchvision
+from torchvision import transforms
+from torchvision.utils import save_image
 from tqdm.auto import tqdm
 
 
@@ -35,10 +36,10 @@ class CIFAR10H:
                 (path / cl).mkdir(parents=True, exist_ok=True)
         transform = transforms.Compose([transforms.ToTensor()])
         testset = torchvision.datasets.CIFAR10(
-            root=self.DIR, train=True, download=True, transform=transform
+            root=self.DIR, train=True, download=True, transform=transform,
         )
         trainset = torchvision.datasets.CIFAR10(
-            root=self.DIR, train=False, download=True, transform=transform
+            root=self.DIR, train=False, download=True, transform=transform,
         )
         for i, (img, label) in tqdm(enumerate(trainset), total=len(trainset)):
             if i < 9500:
@@ -58,14 +59,14 @@ class CIFAR10H:
             )
         print("Created:")
         for set, path in zip(
-            ("train", "val", "test"), [train_path, valid_path, test_path]
+            ("train", "val", "test"), [train_path, valid_path, test_path],
         ):
             print(f"- {set}: {path}")
         print("Handling crowdsourced labels")
         self.get_crowd_labels()
         print(f"Train crowd labels are in {self.DIR / 'answers.json'}")
         print(
-            f"Train crowd labels (validation set) are in {self.DIR / 'answers_valid.json'}"
+            f"Train crowd labels (validation set) are in {self.DIR / 'answers_valid.json'}",
         )
 
     def get_crowd_labels(self):
@@ -91,7 +92,7 @@ class CIFAR10H:
             res[int(t)] = {}
             for w in tmp.annotator_id:
                 res[int(t)][str(w)] = int(
-                    tmp[tmp.annotator_id == w].chosen_label.iloc[0]
+                    tmp[tmp.annotator_id == w].chosen_label.iloc[0],
                 )
         res_train = dict(sorted(res_train.items()))
         res_valid = dict(sorted(res_valid.items()))

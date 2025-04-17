@@ -1,12 +1,12 @@
-from sys import getsizeof
 import warnings
 from collections.abc import Generator
+from sys import getsizeof
 from typing import Annotated
 
-from loguru import logger
 import numpy as np
 import sparse as sp
 from annotated_types import Ge
+from loguru import logger
 from numpy.typing import NDArray
 from pydantic import validate_call
 from tqdm.auto import tqdm
@@ -33,7 +33,7 @@ class DawidSkeneSparse(DawidSkene):
 
         self.crowd_matrix = crowd_matrix.to_coo()
         logger.debug(
-            f"Size of sparse crowd matrix: {getsizeof(self.crowd_matrix)}"
+            f"Size of sparse crowd matrix: {getsizeof(self.crowd_matrix)}",
         )
 
     def _init_T(self) -> None:

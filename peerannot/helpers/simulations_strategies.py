@@ -1,10 +1,11 @@
+from pathlib import Path
+
 import numpy as np
 from tqdm.auto import tqdm
-from pathlib import Path
 
 
 def with_confusion(
-    n_worker, true_labels, K, matrix, rng, *, difficulties=None, **kwargs
+    n_worker, true_labels, K, matrix, rng, *, difficulties=None, **kwargs,
 ):
     """Generate an answer from confusion matrices.
 
@@ -40,7 +41,7 @@ def with_confusion(
         howmany = min(min(workerload, len(possible_workers)), feedback)
         if howmany == 0:
             raise ValueError(
-                f"Could not satisfy conditions:\n \t n_task={n_task}, \n\t workerload = {workerload}, \n\tfeedback effort={feedback}\n\t n_worker={n_worker}."
+                f"Could not satisfy conditions:\n \t n_task={n_task}, \n\t workerload = {workerload}, \n\tfeedback effort={feedback}\n\t n_worker={n_worker}.",
             )
         if kwargs["imbalance_votes"]:
             howmany = rng.choice(range(howmany)) + 1  # range: (0: howmany -1)
@@ -109,7 +110,7 @@ def student_teacher(n_worker, true_labels, K, rng, **kwargs):
     n_student = int(n_worker * ratio)
     n_teacher = n_worker - n_student
     print(f"Simulating {n_student} students and {n_teacher} teachers")
-    if kwargs.get("matrix_file", None):
+    if kwargs.get("matrix_file"):
         matrices = np.load(kwargs["matrix_file"])[:n_teacher, :, :]
     else:
         alpha = [1] * K
@@ -132,7 +133,7 @@ def student_teacher(n_worker, true_labels, K, rng, **kwargs):
             (
                 n_teacher + np.arange(n_student).reshape(-1, 1),
                 following.reshape(-1, 1),
-            )
+            ),
         ),
     )
     return answers
@@ -155,7 +156,7 @@ def matrix_independent(n_worker, true_labels, K, rng, **kwargs):
     :return: answers in the peerannot format {task: {worker: label}}
     :rtype: dictionnary of length n_task
     """
-    if kwargs.get("matrix_file", None):
+    if kwargs.get("matrix_file"):
         matrices = np.load(kwargs["matrix_file"])
     else:
         alpha = [1] * K
@@ -202,7 +203,7 @@ def discrete_difficuty(n_worker, true_labels, K, rng, **kwargs):
         p=[ratio_diff * p_hard, p_hard, p_random],
         size=nt,
     )
-    if kwargs.get("matrix_file", None):
+    if kwargs.get("matrix_file"):
         matrices = np.load(kwargs["matrix_file"])
         assert matrices.shape == (
             n_worker,
@@ -219,7 +220,7 @@ def discrete_difficuty(n_worker, true_labels, K, rng, **kwargs):
             good_matrices.append(mat)
         matrix_good = np.stack(good_matrices)  # (good_worker, K, K)
         matrix_bad = np.stack(
-            [rng.dirichlet([5.0] * K, size=K) for _ in range(bad_workers)]
+            [rng.dirichlet([5.0] * K, size=K) for _ in range(bad_workers)],
         )  # (bad_worker, K, K)
         matrices = np.vstack((matrix_good, matrix_bad))
     answers = with_confusion(

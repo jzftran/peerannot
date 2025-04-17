@@ -1,13 +1,15 @@
-import torch
-from torch import nn
-import numpy as np
-from collections.abc import Iterable
-from ..template import CrowdModel, FilePathInput
-from pathlib import Path
-from tqdm.auto import tqdm
 import json
+from collections.abc import Iterable
+from pathlib import Path
+
+import numpy as np
+import torch
 import torch.nn.functional as f
+from torch import nn
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
+
+from ..template import CrowdModel
 
 DEVICE = "cpu" if not torch.cuda.is_available() else "cuda"
 
@@ -84,21 +86,21 @@ class NoiseAdaptationLayer(nn.Module):
         super().__init__()
 
         self.global_confusion_matrix = nn.Parameter(
-            torch.eye(n_class, n_class) * 2, requires_grad=True
+            torch.eye(n_class, n_class) * 2, requires_grad=True,
         )
         self.local_confusion_matrices = nn.Parameter(
             torch.stack(
-                [torch.eye(n_class, n_class) * 2 for _ in range(n_annotator)]
+                [torch.eye(n_class, n_class) * 2 for _ in range(n_annotator)],
             ),
             requires_grad=True,
         )
 
     def forward(self, f, w):
         global_prob = torch.einsum(
-            "ij,jk->ik", f, self.global_confusion_matrix
+            "ij,jk->ik", f, self.global_confusion_matrix,
         )
         local_probs = torch.einsum(
-            "ik,jkl->ijl", f, self.local_confusion_matrices
+            "ik,jkl->ijl", f, self.local_confusion_matrices,
         )
 
         h = (
@@ -143,11 +145,11 @@ class CoNAL_net(nn.Module):
         super().__init__()
 
         self.auxiliary_network = AuxiliaryNetwork(
-            input_dim, annotator_dim, embedding_dim
+            input_dim, annotator_dim, embedding_dim,
         )
         self.classifier = classifier
         self.noise_adaptation_layer = NoiseAdaptationLayer(
-            n_class, n_annotator
+            n_class, n_annotator,
         )
 
     def forward(self, x, annotator=None):
@@ -261,14 +263,14 @@ class CoNAL(CrowdModel):
         self.scale = scale
         self.tasks_path = Path(tasks_path).resolve()
         self.answers = Path(answers).resolve()
-        with open(self.answers, "r") as ans:
+        with open(self.answers) as ans:
             self.answers = json.load(ans)
         super().__init__(self.answers)
         self.answers_orig = self.answers
 
         kwargs["labels"] = None  # to prevent any loading of labels
         self.trainset, self.valset, self.testset = load_all_data(
-            self.tasks_path, labels_path=None, **kwargs
+            self.tasks_path, labels_path=None, **kwargs,
         )
         self.input_dim = np.prod(self.trainset[0][0].shape).item()
         self.model = get_model(
@@ -291,7 +293,7 @@ class CoNAL(CrowdModel):
             embedding_dim=20,
         )
         self.optimizer, self.scheduler = get_optimizer(
-            self.conal_net, optimizer, **kwargs
+            self.conal_net, optimizer, **kwargs,
         )
         self.output_name = output_name
         self.criterion = nn.CrossEntropyLoss(ignore_index=-1, reduction="mean")
@@ -393,7 +395,7 @@ class CoNAL(CrowdModel):
             if epoch in kwargs["milestones"]:
                 print()
                 print(
-                    f"Adjusting learning rate to = {self.scheduler.optimizer.param_groups[0]['lr']:.4f}"
+                    f"Adjusting learning rate to = {self.scheduler.optimizer.param_groups[0]['lr']:.4f}",
                 )
 
         # load and test self.conal_net
@@ -418,11 +420,11 @@ class CoNAL(CrowdModel):
             print(f"- {k}: {vprint}")
         (self.tasks_path / "results").mkdir(parents=True, exist_ok=True)
         with open(
-            self.tasks_path / "results" / f"{self.output_name}.json", "w"
+            self.tasks_path / "results" / f"{self.output_name}.json", "w",
         ) as f:
             json.dump(logger, f, indent=3, ensure_ascii=False)
         print(
-            f"Results stored in {self.tasks_path / 'results' / f'{self.output_name}.json'}"
+            f"Results stored in {self.tasks_path / 'results' / f'{self.output_name}.json'}",
         )
 
     def run_epoch(self, model, trainloader, criterion, optimizer, logger):

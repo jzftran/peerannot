@@ -1,17 +1,18 @@
-import numpy as np
-from pathlib import Path
 import json
 import shutil
+from pathlib import Path
 
-from pydantic import ValidationError
+import numpy as np
 import pytest
+from pydantic import ValidationError
+
 from peerannot.models import DawidSkene
 
 dir_toydata = Path(__file__).parents[1] / "datasets" / "toy-data"
 
 
 def load_json(path):
-    with open(path, "r") as f:
+    with open(path) as f:
         return json.load(f)
 
 
@@ -71,7 +72,7 @@ def test_wawa():
         y = wawa.get_answers()
         expected = np.array([1, 0, 1])
         assert np.isclose(
-            (wawa.worker_score - np.array([1 / 2, 1, 1, 1 / 2])).sum(), 0
+            (wawa.worker_score - np.array([1 / 2, 1, 1, 1 / 2])).sum(), 0,
         )
         assert all([e == y_ for e, y_ in zip(expected, y)])
         # assert True == False
@@ -87,7 +88,7 @@ def test_IWMV():
         y = wawa_it.get_answers()
         expected = np.array([1, 0, 1])
         assert np.isclose(
-            (wawa_it.worker_score - np.array([1 / 2, 1, 1, 1 / 2])).sum(), 0
+            (wawa_it.worker_score - np.array([1 / 2, 1, 1, 1 / 2])).sum(), 0,
         )
         assert all([e == y_ for e, y_ in zip(expected, y)])
 
@@ -107,7 +108,7 @@ def test_glad():
     from peerannot.models import GLAD
 
     glad = GLAD(
-        ANSWERS, n_classes=2, n_workers=4, dataset=dir_toydata / "temp"
+        ANSWERS, n_classes=2, n_workers=4, dataset=dir_toydata / "temp",
     )
     glad.run()
     y = glad.get_answers()
@@ -120,9 +121,9 @@ def test_glad():
         len(
             list(
                 (dir_toydata / "temp" / "identification" / "glad").glob(
-                    "*.npy"
-                )
-            )
+                    "*.npy",
+                ),
+            ),
         )
         == 2
     )

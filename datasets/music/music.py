@@ -1,10 +1,11 @@
 import json
-from pathlib import Path
-import zipfile
-import pandas as pd
 import shutil
-from urllib import request
 import tarfile
+import zipfile
+from pathlib import Path
+from urllib import request
+
+import pandas as pd
 
 
 class Music:
@@ -34,7 +35,7 @@ class Music:
                 tar.extractall(path=filename.parent)
 
         with zipfile.ZipFile(
-            self.DIR / "downloads" / "kaggle_dataset.zip", "r"
+            self.DIR / "downloads" / "kaggle_dataset.zip", "r",
         ) as zip_ref:
             zip_ref.extractall(self.DIR / "downloads")
 
@@ -88,7 +89,7 @@ class Music:
             )
         print("Created:")
         for set, path in zip(
-            ("train", "val", "test"), [train_path, valid_path, test_path]
+            ("train", "val", "test"), [train_path, valid_path, test_path],
         ):
             print(f"- {set}: {path}")
         self.get_crowd_labels()

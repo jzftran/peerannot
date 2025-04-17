@@ -1,15 +1,16 @@
-import torch
-from torch.utils.data import DataLoader
-import torch.nn as nn
-import torch.optim as optim
-import click
-from pathlib import Path
-from tqdm.auto import tqdm
-import torchmetrics
 import json
-import numpy as np
-import peerannot.training.load_data as ptrain
 from collections.abc import Iterable
+from pathlib import Path
+
+import click
+import numpy as np
+import torch
+import torchmetrics
+from torch import nn, optim
+from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
+
+import peerannot.training.load_data as ptrain
 from peerannot.helpers import networks as nethelp
 
 trainmod = click.Group(
@@ -89,7 +90,7 @@ def get_optimizer(net, optimizer, **kwargs):
         )
     elif kwargs["scheduler"] == "multistep":
         scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, milestones=milestones, gamma=kwargs["lr_decay"]
+            optimizer, milestones=milestones, gamma=kwargs["lr_decay"],
         )
     else:
         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [1e10], gamma=1)
@@ -97,7 +98,7 @@ def get_optimizer(net, optimizer, **kwargs):
 
 
 @trainmod.command(
-    help="Train a classification neural network given a dataset path, an output name and the number of classes"
+    help="Train a classification neural network given a dataset path, an output name and the number of classes",
 )
 @click.argument("datapath", default=Path.cwd(), type=click.Path(exists=True))
 @click.option(
@@ -158,7 +159,7 @@ def get_optimizer(net, optimizer, **kwargs):
 @click.option("--lr", type=float, default=0.1, help="Learning rate")
 @click.option("--momentum", type=float, default=0.9, help="Momentum for the optimizer")
 @click.option(
-    "--decay", type=float, default=5e-4, help="Weight decay for the optimizer"
+    "--decay", type=float, default=5e-4, help="Weight decay for the optimizer",
 )
 @click.option(
     "--scheduler",
@@ -177,7 +178,7 @@ def get_optimizer(net, optimizer, **kwargs):
 @click.option(
     "--n-params",
     type=int,
-    default=int(32 * 32 * 3),
+    default=(32 * 32 * 3),
     help="Number of parameters for the logistic regression only",
 )
 @click.option(
@@ -214,7 +215,7 @@ def train(datapath, output_name, n_classes, **kwargs):
         kwargs["metadata_path"] = path_folders / "metadata.json"
     else:
         kwargs["metadata_path"] = Path(["metadata_path"]).resolve()
-    with open(kwargs["metadata_path"], "r") as metadata:
+    with open(kwargs["metadata_path"]) as metadata:
         metadata = json.load(metadata)
     kwargs["n_workers"] = metadata["n_workers"]
 
@@ -441,7 +442,6 @@ def modelinfo():
     for mod in nethelp.get_all_models():
         print(f"- {mod}")
     print("-" * 10)
-    return
 
 
 def compute_ece(model, dataloader, num_bins=15):
@@ -505,7 +505,7 @@ def compute_ece_by_class(model, dataloader, num_bins=15):
 
                 # Compute ECE for class c
                 ece_by_class[c] += torch.sum(
-                    torch.abs(bin_accuracy - bin_confidence) * bin_count
+                    torch.abs(bin_accuracy - bin_confidence) * bin_count,
                 )
     ece_by_class /= num_samples_by_class
     return ece_by_class

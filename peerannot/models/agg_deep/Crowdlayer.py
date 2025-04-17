@@ -1,13 +1,14 @@
+import json
+from collections.abc import Iterable
+from pathlib import Path
+
+import numpy as np
 import torch
 from torch import nn
-import numpy as np
-from collections.abc import Iterable
-from ..template import CrowdModel
-from pathlib import Path
+from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
-import json
-from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
+
+from ..template import CrowdModel
 
 DEVICE = "cpu" if not torch.cuda.is_available() else "cuda"
 
@@ -72,7 +73,7 @@ class Crowdlayer_net(nn.Module):
         self.n_classes = n_class
         self.workers = [torch.eye(n_class) for _ in range(self.n_worker)]
         self.confusion = nn.Parameter(
-            torch.stack(self.workers), requires_grad=True
+            torch.stack(self.workers), requires_grad=True,
         )
 
     def forward(self, x):
@@ -119,7 +120,7 @@ class Crowdlayer(CrowdModel):
 
         .. math::
 
-            h_i^{(j)} = \\sigma((\\pi^{(j)})\sigma (z_i )),
+            h_i^{(j)} = \\sigma((\\pi^{(j)})\\sigma (z_i )),
 
         The final loss is the crossentropy between the worker-specific prediction and the given label.
 
@@ -168,14 +169,14 @@ class Crowdlayer(CrowdModel):
         self.scale = scale
         self.tasks_path = Path(tasks_path).resolve()
         self.answers = Path(answers).resolve()
-        with open(self.answers, "r") as ans:
+        with open(self.answers) as ans:
             self.answers = json.load(ans)
         super().__init__(self.answers)
         self.answers_orig = self.answers
 
         kwargs["labels"] = None  # to prevent any loading of labels
         self.trainset, self.valset, self.testset = load_all_data(
-            self.tasks_path, labels_path=None, **kwargs
+            self.tasks_path, labels_path=None, **kwargs,
         )
         self.input_dim = np.prod(self.trainset[0][0].shape).item()
         self.model = get_model(
@@ -197,13 +198,13 @@ class Crowdlayer(CrowdModel):
             self.model,
         )
         self.optimizer, self.scheduler = get_optimizer(
-            self.crowdlayer_net.classifier, optimizer, **kwargs
+            self.crowdlayer_net.classifier, optimizer, **kwargs,
         )
         kwargs["use_parameters"] = (
             False  # disable parameters for the optimizer
         )
         self.optimizer2, self.scheduler2 = get_optimizer(
-            self.crowdlayer_net.confusion, optimizer, **kwargs
+            self.crowdlayer_net.confusion, optimizer, **kwargs,
         )
         kwargs["use_parameters"] = True
         self.setup(**kwargs)
@@ -308,13 +309,13 @@ class Crowdlayer(CrowdModel):
             if epoch in kwargs["milestones"]:
                 print()
                 print(
-                    f"Adjusting learning rate to = {self.scheduler.optimizer.param_groups[0]['lr']:.4f}"
+                    f"Adjusting learning rate to = {self.scheduler.optimizer.param_groups[0]['lr']:.4f}",
                 )
 
         # load and test self.conal_net
         checkpoint = torch.load(path_best / f"{self.output_name}.pth")
         self.crowdlayer_net.classifier.load_state_dict(
-            checkpoint["classifier"]
+            checkpoint["classifier"],
         )
         logger = evaluate(
             self.crowdlayer_net.classifier,
@@ -335,15 +336,15 @@ class Crowdlayer(CrowdModel):
             print(f"- {k}: {vprint}")
         (self.tasks_path / "results").mkdir(parents=True, exist_ok=True)
         with open(
-            self.tasks_path / "results" / f"{self.output_name}.json", "w"
+            self.tasks_path / "results" / f"{self.output_name}.json", "w",
         ) as f:
             json.dump(logger, f, indent=3, ensure_ascii=False)
         print(
-            f"Results stored in {self.tasks_path / 'results' / f'{self.output_name}.json'}"
+            f"Results stored in {self.tasks_path / 'results' / f'{self.output_name}.json'}",
         )
 
     def run_epoch(
-        self, model, trainloader, criterion, optimizer, optimizer2, logger
+        self, model, trainloader, criterion, optimizer, optimizer2, logger,
     ):
         """Run one epoch and monitor metrics"""
         model.train()

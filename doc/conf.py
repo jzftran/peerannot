@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # benchopt documentation build configuration file, created by
 # sphinx-quickstart on Thu Jun  1 00:35:01 2017.
@@ -207,7 +206,7 @@ add_module_names = False
 # https://sphinx-copybutton.readthedocs.io/en/latest/ \
 # use.html#using-regexp-prompt-identifiers
 copybutton_prompt_text = (
-    r">>> |\.\.\. |\$ |In \[\d*\]: | {2,5}\.\.\.: | {5,8}: "  # noqa
+    r">>> |\.\.\. |\$ |In \[\d*\]: | {2,5}\.\.\.: | {5,8}: "
 )
 copybutton_prompt_is_regexp = True
 

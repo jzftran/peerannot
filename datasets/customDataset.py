@@ -1,9 +1,10 @@
-import click
 import json
-from pathlib import Path
 import os
-import numpy as np
 from datetime import datetime
+from pathlib import Path
+
+import click
+import numpy as np
 
 
 class CustomDataset:
@@ -13,7 +14,7 @@ class CustomDataset:
 
     ### Functions to compute answers.json from different sources
     def computeJsonAnswers(self, answersPath, outputname):
-        with open(answersPath, "r") as f:
+        with open(answersPath) as f:
             answers = json.load(f)
         with open(
             outputname,
@@ -22,7 +23,7 @@ class CustomDataset:
             json.dump(answers, answ, ensure_ascii=False, indent=3)
 
     def computeInvertJsonAnswers(self, answersPath, outputname):
-        with open(answersPath, "r") as f:
+        with open(answersPath) as f:
             answers = json.load(f)
 
         max_task_id = 0
@@ -71,7 +72,7 @@ class CustomDataset:
 
     def numberWorkers(self, answers_path):
         # We compute how many workers there are in the answers.json file
-        with open(answers_path, "r") as f:
+        with open(answers_path) as f:
             answers = json.load(f)
         answersList = [list(x) for x in answers.values()]
         workersSet = sorted(set(int(x) for xs in answersList for x in xs))
@@ -124,13 +125,13 @@ class CustomDataset:
         orig_name = np.loadtxt(filenameTrainPath, dtype=str)
 
         # Create symlinks in the train, val and test folders
-        currentPath = Path(".")
+        currentPath = Path()
         trainPath = Path(train_path)
 
         taskMaxId = 0
         if val_path == "":
             click.echo(
-                "No val path provided, samples from the train set will be used instead"
+                "No val path provided, samples from the train set will be used instead",
             )
             random_seed = 12345
             rng = np.random.default_rng(random_seed)
@@ -205,15 +206,12 @@ class CustomDataset:
                     "w",
                 ) as answ:
                     json.dump(res_test, answ, ensure_ascii=False, indent=3)
-            else:
-                if test_ground_truth_format == 0:
-                    self.computeRodriguesAnswers(
-                        test_ground_truth, "test_groundTruth.json"
-                    )
-                elif test_ground_truth_format == 1:
-                    self.computeJsonAnswers(test_ground_truth, "test_groundTruth.json")
-                elif test_ground_truth_format == 2:
-                    self.computeJsonAnswers(test_ground_truth, "test_groundTruth.json")
+            elif test_ground_truth_format == 0:
+                self.computeRodriguesAnswers(
+                    test_ground_truth, "test_groundTruth.json",
+                )
+            elif test_ground_truth_format == 1 or test_ground_truth_format == 2:
+                self.computeJsonAnswers(test_ground_truth, "test_groundTruth.json")
 
         # Verify that the metadata.json file exists or is complete. Create it if not
         if metadata == "":
@@ -226,7 +224,7 @@ class CustomDataset:
             with open("./metadata.json", "w") as answ:
                 json.dump(metadata, answ, ensure_ascii=False, indent=3)
         else:
-            with open(metadata, "r") as f:
+            with open(metadata) as f:
                 metadata = json.load(f)
 
             if "name" not in metadata.keys():

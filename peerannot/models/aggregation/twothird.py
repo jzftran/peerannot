@@ -1,8 +1,10 @@
-from ..template import CrowdModel
-import numpy as np
 import warnings
 from pathlib import Path
+
+import numpy as np
 from tqdm.auto import tqdm
+
+from ..template import CrowdModel
 
 
 class TwoThird(CrowdModel):
@@ -18,7 +20,7 @@ class TwoThird(CrowdModel):
 
         .. math::
 
-            \mathrm{TwoThird}(i, \{y_i^{(j)}\}_j) = \\begin{cases} \mathrm{MV}(i, \{y_i^{(j)}\}_j) & \\text{if} s_i=1 \\\\
+            \\mathrm{TwoThird}(i, \\{y_i^{(j)}\\}_j) = \\begin{cases} \\mathrm{MV}(i, \\{y_i^{(j)}\\}_j) & \\text{if} s_i=1 \\\\
             \\text{undefined} & \\text{otherwise} \\end{cases}
 
         :param answers: Dictionary of workers answers with format
@@ -40,7 +42,7 @@ class TwoThird(CrowdModel):
         super().__init__(answers)
         self.n_classes = n_classes
         self.sparse = sparse
-        if kwargs.get("dataset", None):
+        if kwargs.get("dataset"):
             self.path_save = (
                 Path(kwargs["dataset"]) / "identification" / "twothird"
             )
@@ -56,7 +58,7 @@ class TwoThird(CrowdModel):
             """
             TwoThird agreement only returns hard labels.
             Defaulting to ``get_answers()``.
-            """
+            """,
         )
         return self.get_answers()
 
@@ -87,8 +89,8 @@ class TwoThird(CrowdModel):
                 (
                     np.random.choice(
                         np.flatnonzero(
-                            self.baseline[i] == self.baseline[i].max()
-                        )
+                            self.baseline[i] == self.baseline[i].max(),
+                        ),
                     )
                     if enough_votes[i] == 1
                     and self.baseline[i].max() / sum_[i] >= 2 / 3
@@ -105,7 +107,7 @@ class TwoThird(CrowdModel):
                 max_ = count.max()
                 if n_votes >= 2 and max_ / n_votes >= 2 / 3:
                     ans[int(task_id)] = np.random.choice(
-                        np.flatnonzero(count == max_)
+                        np.flatnonzero(count == max_),
                     )
         self.ans = ans
         if self.path_save:

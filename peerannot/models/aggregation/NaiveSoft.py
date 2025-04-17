@@ -1,5 +1,6 @@
-from ..template import CrowdModel
 import numpy as np
+
+from ..template import CrowdModel
 
 
 class NaiveSoft(CrowdModel):
@@ -14,7 +15,7 @@ class NaiveSoft(CrowdModel):
 
         .. math::
 
-            \mathrm{NaiveSoft}(i, \mathcal{D}) = \\left(\sum_{j\in\mathcal{A}(x_i)}\mathbf{1}(y_i^{(j)} = k)\\right)_{k\in[K]}
+            \\mathrm{NaiveSoft}(i, \\mathcal{D}) = \\left(\\sum_{j\\in\\mathcal{A}(x_i)}\\mathbf{1}(y_i^{(j)} = k)\\right)_{k\\in[K]}
 
 
         :param answers: Dictionary of workers answers with format
@@ -54,5 +55,5 @@ class NaiveSoft(CrowdModel):
         :rtype: numpy.ndarray
         """
         return np.vectorize(self.inv_labels.get)(
-            np.argmax(self.get_probas(), axis=1)
+            np.argmax(self.get_probas(), axis=1),
         )

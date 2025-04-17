@@ -1,12 +1,14 @@
 # Adapted from https://github.com/notani/python-glad
 
-from ..template import CrowdModel
+from pathlib import Path
+
 import numpy as np
 import scipy as sp
-import scipy.stats
 import scipy.optimize
+import scipy.stats
 from tqdm.auto import tqdm
-from pathlib import Path
+
+from ..template import CrowdModel
 
 
 def sigmoid(x):
@@ -123,8 +125,7 @@ class GLAD(CrowdModel):
             Q = self.computeQ()
             counter += 1
             pbar.update(1)
-        else:
-            pbar.set_description("Finished")
+        pbar.set_description("Finished")
         pbar.close()
 
     def calcLogProbL(self, item, *args):
@@ -171,10 +172,10 @@ class GLAD(CrowdModel):
 
     def getBoundsX(self, alpha=(-100, 100), beta=(-100, 100)):
         alpha_bounds = np.array(
-            [[alpha[0], alpha[1]] for i in range(self.n_workers)]
+            [[alpha[0], alpha[1]] for i in range(self.n_workers)],
         )
         beta_bounds = np.array(
-            [[beta[0], beta[1]] for i in range(self.n_workers)]
+            [[beta[0], beta[1]] for i in range(self.n_workers)],
         )
         return np.r_[alpha_bounds, beta_bounds]
 
@@ -327,7 +328,7 @@ class GLAD(CrowdModel):
         :rtype: numpy.ndarray
         """
         return np.vectorize(self.inv_labels.get)(
-            np.argmax(self.get_probas(), axis=1)
+            np.argmax(self.get_probas(), axis=1),
         )
 
     def save_difficulty(self, path):
