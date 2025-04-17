@@ -10,7 +10,7 @@ from pydantic import validate_call
 from tqdm.auto import tqdm
 
 from peerannot.models.aggregation.warnings import DidNotConverge
-from peerannot.models.template import AnswersDict, CrowdModel, FilePathInput
+from peerannot.models.template import AnswersDict, CrowdModel
 
 
 class DawidSkene(CrowdModel):
@@ -77,11 +77,11 @@ class DawidSkene(CrowdModel):
     def from_crowd_matrix(
         cls,
         crowd_matrix: np.ndarray,
-        n_workers: int = 1,
-        n_classes: int = 1,
         **kwargs: dict[str, Any],
     ) -> Self:
         # todo@jzftran: do thin constructor resistant, take care of crowd_matrix content and shape, check CrowdModel
+        n_task, n_workers, n_classes = crowd_matrix.shape
+
         instance = cls(
             answers={0: {0: 0}},
             n_workers=n_workers,
@@ -89,9 +89,7 @@ class DawidSkene(CrowdModel):
             **kwargs,
         )
         instance.crowd_matrix = crowd_matrix
-        instance.n_task, instance.n_workers, instance.n_classes = (
-            crowd_matrix.shape
-        )
+        instance.n_task = n_task
         return instance
 
     def _init_crowd_matrix(self) -> None:
