@@ -1,6 +1,6 @@
 from ..template import CrowdModel
 import pandas as pd
-from peerannot.models.aggregation.DS import DawidSkene as DS
+from peerannot.models.aggregation.dawid_skene import DawidSkene as DS
 import torch
 from pathlib import Path
 from tqdm.auto import tqdm

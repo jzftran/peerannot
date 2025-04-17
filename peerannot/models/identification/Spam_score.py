@@ -1,5 +1,5 @@
 import numpy as np
-from peerannot.models.aggregation.DS import DawidSkene as DS
+from peerannot.models.aggregation.dawid_skene import DawidSkene as DS
 from ..template import CrowdModel
 from pathlib import Path
 

@@ -1,6 +1,6 @@
 from ..template import CrowdModel
 import numpy as np
-from peerannot.models.aggregation.DS import DawidSkene
+from peerannot.models.aggregation.dawid_skene import DawidSkene
 
 
 class WDS(CrowdModel):

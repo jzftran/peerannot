@@ -1,6 +1,6 @@
 import numpy as np
 
-from .DS import DawidSkene
+from .dawid_skene import DawidSkene
 
 
 class PooledMultinomial(DawidSkene):
