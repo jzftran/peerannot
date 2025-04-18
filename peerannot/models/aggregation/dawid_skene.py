@@ -14,8 +14,6 @@ from tqdm.auto import tqdm
 from peerannot.models.aggregation.warnings import DidNotConverge
 from peerannot.models.template import AnswersDict, CrowdModel
 
-from .dawid_skene import DawidSkene
-
 
 class DawidSkene(CrowdModel):
     """
