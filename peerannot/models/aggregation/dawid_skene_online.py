@@ -464,3 +464,26 @@ class DawidSkeneOnline:
             ).reshape(-1, 1)
 
         return batch_rho, batch_pi
+
+    def process_batch_matrix(
+        self,
+        batch_matrix: np.ndarray,
+        task_indices: list[int] | None = None,
+        maxiter: int = 50,
+        epsilon: float = 1e-6,
+    ) -> list[float]:
+        if self.rho is None or self.pi is None or self.T is None:
+            # Initialization path (must infer dimensions from matrix)
+            self.n_task, self.n_workers, self.n_classes = batch_matrix.shape
+            self.rho = np.ones(self.n_classes) / self.n_classes
+            self.pi = np.ones((self.n_workers, self.n_classes, self.n_classes))
+            self.pi /= self.n_classes
+            self.T = self._init_T(batch_matrix)
+        if task_indices is None:
+            task_indices = list(range(batch_matrix.shape[0]))
+        return self._em_loop_on_batch(
+            batch_matrix,
+            task_indices,
+            epsilon,
+            maxiter,
+        )
