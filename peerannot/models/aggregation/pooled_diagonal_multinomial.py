@@ -11,7 +11,13 @@ class PooledDiagonalMultinomial(DawidSkene):
         diag_votes = np.einsum("tq, tiq -> q", self.T, self.crowd_matrix)
         denom = np.einsum("tq, tij -> q", self.T, self.crowd_matrix)
 
-        self.pi = diag_votes / denom
+        self.pi = np.divide(
+            diag_votes,
+            denom,
+            out=np.zeros_like(diag_votes),
+            where=denom != 0,
+        )
+
         self.pi_non_diag_values = (np.ones_like(self.pi) - self.pi) / (
             self.n_classes - 1
         )

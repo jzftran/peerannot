@@ -12,10 +12,15 @@ class PoooledMultinomialBinary(DawidSkene):
         )  # n_tasks, n_classes: sum of votes given by each worker
 
         n_i = np.sum(self.n_il, axis=0)
-
+        # n_i_safe = np.where(n_i == 0, 1, n_i)
         self.total_votes = np.sum(self.n_il)
 
-        self.T = self.n_il / n_i
+        self.T = np.divide(
+            self.n_il,
+            n_i,
+            out=np.zeros_like(self.n_il, dtype=float),
+            where=n_i != 0,
+        )
 
     def _m_step(self) -> None:
         """Maximizing log likelihood with a single confusion matrix shared

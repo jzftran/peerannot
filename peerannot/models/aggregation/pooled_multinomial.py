@@ -39,7 +39,13 @@ class PooledMultinomial(DawidSkene):
             self.crowd_matrix,
         )  # shape (n_classes, n_classes)
         denom = aggregated_votes.sum(axis=1, keepdims=True)
-        self.shared_pi = np.where(denom > 0, aggregated_votes / denom, 0)
+
+        self.shared_pi = np.divide(
+            aggregated_votes,
+            denom,
+            out=np.zeros_like(aggregated_votes),
+            where=denom != 0,
+        )
 
     def _e_step(self) -> None:
         """Estimate indicator variables using a shared confusion matrix"""
