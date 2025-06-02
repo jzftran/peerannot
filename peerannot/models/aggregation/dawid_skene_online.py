@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from itertools import batched
 from typing import TYPE_CHECKING, Annotated, Any
 
 import numpy as np
@@ -54,6 +55,26 @@ def batch_generator(
     tasks = list(answers.items())
     for i in range(0, len(tasks), batch_size):
         yield dict(tasks[i : i + batch_size])
+
+
+def batch_generator_by_user(
+    answers: AnswersDict,
+    batch_size: Annotated[int, Gt(0)],
+) -> Generator[AnswersDict, Any, None]:
+    all_users = {user_id for obs in answers.values() for user_id in obs}
+
+    for user_batch in batched(all_users, batch_size):
+        batch_answers = {
+            obs_id: {
+                user_id: class_id
+                for user_id, class_id in obs.items()
+                if user_id in user_batch
+            }
+            for obs_id, obs in answers.items()
+        }
+        yield {
+            obs_id: votes for obs_id, votes in batch_answers.items() if votes
+        }
 
 
 class DawidSkeneOnline:
@@ -248,13 +269,13 @@ class DawidSkeneOnline:
     def get_probas(self) -> np.ndarray:
         """Get current estimates of task-class probabilities"""
         if self.T is None:
-            raise NotInitialized
+            raise NotInitialized(self.__class__.__name__)
         return self.T
 
     def get_answers(self) -> np.ndarray:
         """Get current most likely class for each task"""
         if self.T is None:
-            raise NotInitialized
+            raise NotInitialized(self.__class__.__name__)
         return np.argmax(self.get_probas(), axis=1)
 
     def process_batch(
