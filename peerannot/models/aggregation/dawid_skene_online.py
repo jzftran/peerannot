@@ -1,3 +1,4 @@
+# %%
 from __future__ import annotations
 
 from itertools import batched
@@ -132,7 +133,12 @@ class DawidSkeneOnline:
             self.n_workers = new_n_workers
             self.n_task = new_n_task
             # Runs one em step
-            batch_matrix, _ = self._process_batch_to_matrix(batch)
+            (
+                batch_matrix,
+                _,
+                _,
+                _,
+            ) = self._process_batch_to_matrix(batch)
 
             self.rho, self.pi = self._m_step(
                 batch_matrix,
@@ -217,7 +223,7 @@ class DawidSkeneOnline:
     def _process_batch_to_matrix(
         self,
         batch: dict[int, dict[int, int]],
-    ) -> tuple[np.ndarray, list[int]]:
+    ) -> tuple[np.ndarray, list[int], list[int], list[int]]:
         """
         Convert a batch of task (AnswerDict) assignments to a matrix format.
 
@@ -252,14 +258,27 @@ class DawidSkeneOnline:
             dtype=bool,
         )
 
-        # Map task IDs to batch indices
         task_indices = sorted(batch.keys())
+        worker_indices = []
+        class_indices = []
 
+        class_set = set()
+        user_set = set()
         for i, task in enumerate(task_indices):
-            for worker, label in batch[task].items():
-                batch_matrix[i, worker, label] = True
+            for user_id, label in batch[task].items():
+                batch_matrix[i, user_id, label] = True
+                user_set.add(user_id)
+                class_set.add(label)
 
-        return batch_matrix, task_indices
+        worker_indices = list(user_set)
+        class_indices = list(class_set)
+
+        return (
+            batch_matrix,
+            task_indices,
+            worker_indices,
+            class_indices,
+        )
 
     def _init_T(self, batch_matrix: np.ndarray) -> np.ndarray:
         T = batch_matrix.sum(axis=1)
@@ -284,86 +303,57 @@ class DawidSkeneOnline:
         maxiter: int = 50,
         epsilon: float = 1e-6,
     ) -> list[float]:
-        """Process a batch with per-batch EM until local convergence"""
-        self._ensure_capacity(batch)
-        batch_matrix, task_indices = self._process_batch_to_matrix(batch)
+        """Process a batch with per-batch EM until local convergence.
 
-        # Run per-batch EM until convergence
+        Returns list of log-likelihoods."""
+
+        self._ensure_capacity(batch)
+
+        (
+            batch_matrix,
+            task_indices,
+            worker_indices,
+            class_indices,
+        ) = self._process_batch_to_matrix(batch)
+
         return self._em_loop_on_batch(
             batch_matrix,
             task_indices,
-            maxiter,
+            worker_indices,
+            class_indices,
             epsilon,
+            maxiter,
         )
 
     def _em_loop_on_batch(
         self,
         batch_matrix: np.ndarray,
         task_indices: list[int],
+        worker_indices: list[int],
+        class_indices: list[int],
         epsilon: Annotated[float, Ge(0)] = 1e-6,
         maxiter: Annotated[int, Gt(0)] = 50,
     ) -> list[float]:
-        """Execute the expectation-maximization algorithm on a given batch.
-
-        Performs the EM algorithm iteratively on a batch of tasks, updating
-        the model parameters based on the current estimates of the latent
-        variables.
-        The method continues until a maximum number of iterations is reached
-        or the change in log-likelihood falls velow a specified treshold.
-
-        Parameters:
-        ----------
-        batch_matrix : np.ndarray
-                A tensor array of shape (batch_size, n_workers, n_classes)
-                where each entry is a boolean indicating whether a
-                worker is assigned to a label for a task.
-
-        task_indices : list[int]
-            A list of task indices corresponding to the tasks in the batch.
-            These indices are used for updating the model parameters.
-
-        maxiter : int
-            The maximum number of iterations to perform in the EM loop.
-
-        epsilon : float
-            The convergence threshold for the change in log-likelihood.
-            The loop will terminate if the change is less than this value.
-
-        Returns:
-        -------
-        list[float]
-            A list of log-likelihood values recorded at each
-            iteration of the EM loop.
-
-        """
         i = 0
         eps = np.inf
         ll: list[float] = []
         batch_T = self._init_T(batch_matrix)
-        while i < maxiter and eps > epsilon:
-            # m-step
-            batch_rho, batch_pi = self._m_step(
-                batch_matrix,
-                batch_T,
-            )
 
-            # e-step
+        while i < maxiter and eps > epsilon:
+            batch_rho, batch_pi = self._m_step(batch_matrix, batch_T)
             batch_T, batch_denom_e_step = self._e_step(
                 batch_matrix,
                 batch_pi,
                 batch_rho,
             )
 
-            # Log-Likelihood (batch-only version)
             likeli = np.log(np.sum(batch_denom_e_step))
             ll.append(likeli)
             if i > 0:
                 eps = np.abs(ll[-1] - ll[-2])
-
             i += 1
 
-        # Online update
-
+        # Online updates
         for i, task_idx in enumerate(task_indices):
             if task_idx >= self.T.shape[0]:
                 self.T = self._expand_array(
@@ -371,13 +361,23 @@ class DawidSkeneOnline:
                     (task_idx + 1, self.n_classes),
                     fill_value=1.0 / self.n_classes,
                 )
-
             self.T[task_idx] = (
                 self.T[task_idx] * (1 - self.gamma) + batch_T[i] * self.gamma
             )
 
-        self.rho = self.rho * (1 - self.gamma) + batch_rho * self.gamma
-        self.pi = self.pi * (1 - self.gamma) + batch_pi * self.gamma
+        # Update only classes present in the batch
+        for k, class_idx in enumerate(class_indices):
+            self.rho[class_idx] = (
+                self.rho[class_idx] * (1 - self.gamma)
+                + batch_rho[k] * self.gamma
+            )
+
+        # Update only workers present in the batch
+        for j, worker_idx in enumerate(worker_indices):
+            self.pi[worker_idx] = (
+                self.pi[worker_idx] * (1 - self.gamma)
+                + batch_pi[j] * self.gamma
+            )
 
         return ll
 
@@ -489,10 +489,13 @@ class DawidSkeneOnline:
     def process_batch_matrix(
         self,
         batch_matrix: np.ndarray,
-        task_indices: list[int] | None = None,
+        task_indices: list[int],
+        worker_indices: list[int],
+        class_indices: list[int],
         maxiter: int = 50,
         epsilon: float = 1e-6,
     ) -> list[float]:
+        # TODO:@jzftran ensure capacity
         if self.rho is None or self.pi is None or self.T is None:
             # Initialization path (must infer dimensions from matrix)
             self.n_task, self.n_workers, self.n_classes = batch_matrix.shape
@@ -500,11 +503,12 @@ class DawidSkeneOnline:
             self.pi = np.ones((self.n_workers, self.n_classes, self.n_classes))
             self.pi /= self.n_classes
             self.T = self._init_T(batch_matrix)
-        if task_indices is None:
-            task_indices = list(range(batch_matrix.shape[0]))
+
         return self._em_loop_on_batch(
             batch_matrix,
             task_indices,
+            worker_indices,
+            class_indices,
             epsilon,
             maxiter,
         )
