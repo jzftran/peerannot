@@ -8,12 +8,18 @@ import numpy as np
 from annotated_types import Ge, Gt
 from pydantic import validate_call
 
+from peerannot.models.aggregation.dawid_skene import DawidSkene
 from peerannot.models.aggregation.warnings import NotInitialized
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
     from peerannot.models.template import AnswersDict
+
+type Mapping = dict[str | int, int]
+type WorkerMapping = Mapping
+type TaskMapping = Mapping
+type ClassMapping = Mapping
 
 
 def batch_generator(
@@ -100,6 +106,10 @@ class DawidSkeneOnline:
         # counter for step size (self.gamma)
         self.t = 0
 
+        self.task_mapping: TaskMapping = {}
+        self.worker_mapping: WorkerMapping = {}
+        self.class_mapping: ClassMapping = {}
+
     @property
     def gamma(self) -> float:
         """Compute current step size"""
@@ -108,37 +118,20 @@ class DawidSkeneOnline:
 
     def _ensure_capacity(
         self,
-        batch: dict[int, dict[int, int]],
+        batch_matrix: np.ndarray,
     ) -> None:
         """Ensure internal parameters accommodate all workers, classes, and tasks in the batch."""
 
-        # Collect new observed indices
-        all_workers = {w for answers in batch.values() for w in answers}
-        all_classes = {
-            c for answers in batch.values() for c in answers.values()
-        }
-        all_tasks = set(batch.keys())
-
-        max_class = max(all_classes, default=-1) + 1
-        max_worker = max(all_workers, default=-1) + 1
-        max_task = max(all_tasks, default=-1) + 1
-
         # Update n_classes, n_workers, n_task
-        new_n_classes = max(self.n_classes, max_class)
-        new_n_workers = max(self.n_workers, max_worker)
-        new_n_task = max(self.n_task, max_task)
+        new_n_classes = len(self.class_mapping)
+        new_n_workers = len(self.worker_mapping)
+        new_n_task = len(self.task_mapping)
 
         if any(_ is None for _ in (self.rho, self.pi, self.T)):
             self.n_classes = new_n_classes
             self.n_workers = new_n_workers
             self.n_task = new_n_task
             # Runs one em step
-            (
-                batch_matrix,
-                _,
-                _,
-                _,
-            ) = self._process_batch_to_matrix(batch)
 
             self.rho, self.pi = self._m_step(
                 batch_matrix,
@@ -220,65 +213,47 @@ class DawidSkeneOnline:
         new_array[slices] = old_array[slices]
         return new_array
 
+    def prepare_mapping(
+        self,
+        batch: AnswersDict,
+        task_mapping: TaskMapping,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
+    ):
+        for task_id, worker_class in batch.items():
+            if task_id not in task_mapping:
+                task_mapping[task_id] = len(task_mapping)
+            for worker_id, class_id in worker_class.items():
+                if worker_id not in worker_mapping:
+                    worker_mapping[worker_id] = len(worker_mapping)
+                if class_id not in class_mapping:
+                    class_mapping[class_id] = len(class_mapping)
+
+        return task_mapping, worker_mapping, class_mapping
+
     def _process_batch_to_matrix(
         self,
-        batch: dict[int, dict[int, int]],
-    ) -> tuple[np.ndarray, list[int], list[int], list[int]]:
-        """
-        Convert a batch of task (AnswerDict) assignments to a matrix format.
+        batch: AnswersDict,
+        task_mapping: TaskMapping,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
+    ) -> np.ndarray:
+        num_tasks = len(task_mapping)
+        num_users = len(worker_mapping)
+        num_labels = len(class_mapping)
 
-        Processes a batch of tasks, where each task is associated with a set
-        of workers and their corresponding labels.
-        Converts this batch into a tensor indicating which workers are
-        assigned to which labels for each task. The resulting tensor
-        has dimensions corresponding to the number of
-        tasks, workers, and classes.
-
-        Parameters:
-        ----------
-        batch : dict[int, dict[int, int]]
-            A dictionary where keys are task IDs (integers) and values
-            are dictionaries mapping worker IDs (integers)
-            to their assigned labels (integers).
-
-        Returns:
-        -------
-        tuple[np.ndarray, list[int]]
-            A tuple containing:
-            - batch_matrix: A tensor array of shape
-                (batch_size, n_workers, n_classes) where each entry is
-                a boolean indicating whether a worker is assigned
-                to a label for a task.
-            - task_indices: A sorted list of task IDs corresponding to
-                the rows of the batch_matrix.
-        """
-        batch_size = len(batch)
         batch_matrix = np.zeros(
-            (batch_size, self.n_workers, self.n_classes),
+            (num_tasks, num_users, num_labels),
             dtype=bool,
         )
 
-        task_indices = sorted(batch.keys())
-        worker_indices = []
-        class_indices = []
-
-        class_set = set()
-        user_set = set()
-        for i, task in enumerate(task_indices):
-            for user_id, label in batch[task].items():
-                batch_matrix[i, user_id, label] = True
-                user_set.add(user_id)
-                class_set.add(label)
-
-        worker_indices = list(user_set)
-        class_indices = list(class_set)
-
-        return (
-            batch_matrix,
-            task_indices,
-            worker_indices,
-            class_indices,
-        )
+        for task_id, worker_class in batch.items():
+            for worker_id, class_id in worker_class.items():
+                task_index = task_mapping[task_id]
+                user_index = worker_mapping[worker_id]
+                label_index = class_mapping[class_id]
+                batch_matrix[task_index, user_index, label_index] = True
+        return batch_matrix
 
     def _init_T(self, batch_matrix: np.ndarray) -> np.ndarray:
         T = batch_matrix.sum(axis=1)
@@ -299,7 +274,7 @@ class DawidSkeneOnline:
 
     def process_batch(
         self,
-        batch: dict[int, dict[int, int]],
+        batch: AnswersDict,
         maxiter: int = 50,
         epsilon: float = 1e-6,
     ) -> list[float]:
@@ -307,20 +282,33 @@ class DawidSkeneOnline:
 
         Returns list of log-likelihoods."""
 
-        self._ensure_capacity(batch)
+        self.task_mapping, self.worker_mapping, self.class_mapping = (
+            self.prepare_mapping(
+                batch,
+                self.task_mapping,
+                self.worker_mapping,
+                self.class_mapping,
+            )
+        )
 
-        (
-            batch_matrix,
-            task_indices,
-            worker_indices,
-            class_indices,
-        ) = self._process_batch_to_matrix(batch)
+        task_mapping, worker_mapping, class_mapping = self.prepare_mapping(
+            batch,
+            {},
+            {},
+            {},
+        )
 
-        return self._em_loop_on_batch(
+        batch_matrix = self._process_batch_to_matrix(
+            batch,
+            task_mapping,
+            worker_mapping,
+            class_mapping,
+        )
+        return self.process_batch_matrix(
             batch_matrix,
-            task_indices,
-            worker_indices,
-            class_indices,
+            task_mapping,
+            worker_mapping,
+            class_mapping,
             epsilon,
             maxiter,
         )
@@ -328,9 +316,9 @@ class DawidSkeneOnline:
     def _em_loop_on_batch(
         self,
         batch_matrix: np.ndarray,
-        task_indices: list[int],
-        worker_indices: list[int],
-        class_indices: list[int],
+        task_mapping,
+        worker_mapping,
+        class_mapping,
         epsilon: Annotated[float, Ge(0)] = 1e-6,
         maxiter: Annotated[int, Gt(0)] = 50,
     ) -> list[float]:
@@ -354,30 +342,52 @@ class DawidSkeneOnline:
             i += 1
 
         # Online updates
-        for i, task_idx in enumerate(task_indices):
+        # TODO:@jzftran vectorization?
+
+        for task, batch_task_idx in task_mapping.items():
+            task_idx = self.task_mapping[task]
+
             if task_idx >= self.T.shape[0]:
                 self.T = self._expand_array(
                     self.T,
                     (task_idx + 1, self.n_classes),
                     fill_value=1.0 / self.n_classes,
                 )
-            self.T[task_idx] = (
-                self.T[task_idx] * (1 - self.gamma) + batch_T[i] * self.gamma
-            )
+
+            for class_name, batch_class_idx in class_mapping.items():
+                class_idx = self.class_mapping[class_name]
+                self.T[task_idx][class_idx] = (
+                    self.T[task_idx][class_idx] * (1 - self.gamma)
+                    + batch_T[batch_task_idx][batch_class_idx] * self.gamma
+                )
 
         # Update only classes present in the batch
-        for k, class_idx in enumerate(class_indices):
+        for class_name, batch_class_idx in class_mapping.items():
+            class_idx = self.class_mapping[class_name]
             self.rho[class_idx] = (
                 self.rho[class_idx] * (1 - self.gamma)
-                + batch_rho[k] * self.gamma
+                + batch_rho[batch_class_idx] * self.gamma
             )
 
         # Update only workers present in the batch
-        for j, worker_idx in enumerate(worker_indices):
-            self.pi[worker_idx] = (
-                self.pi[worker_idx] * (1 - self.gamma)
-                + batch_pi[j] * self.gamma
-            )
+        for worker, batch_worker_idx in worker_mapping.items():
+            worker_idx = self.worker_mapping[worker]
+
+            # For each class in the batch, map batch class idx to global class idx
+            batch_to_global = {
+                batch_class_idx: self.class_mapping[class_name]
+                for class_name, batch_class_idx in class_mapping.items()
+            }
+
+            for i_batch, i_global in batch_to_global.items():
+                for j_batch, j_global in batch_to_global.items():
+                    self.pi[worker_idx][i_global][j_global] = (
+                        1 - self.gamma
+                    ) * self.pi[worker_idx][i_global][
+                        j_global
+                    ] + self.gamma * batch_pi[batch_worker_idx][i_batch][
+                        j_batch
+                    ]
 
         return ll
 
@@ -418,9 +428,9 @@ class DawidSkeneOnline:
             the sum of the likelihoods for each task, used for normalization.
 
         """
-        batch_T = np.zeros((batch_matrix.shape[0], self.n_classes))
+        batch_T = np.zeros((batch_matrix.shape[0], batch_matrix.shape[2]))
         for t in range(batch_matrix.shape[0]):
-            for c in range(self.n_classes):
+            for c in range(batch_matrix.shape[2]):
                 likelihood = (
                     np.prod(
                         np.power(local_pi[:, c, :], batch_matrix[t, :, :]),
@@ -473,9 +483,15 @@ class DawidSkeneOnline:
         """
         batch_rho = batch_T.mean(axis=0)
 
-        batch_pi = np.zeros((self.n_workers, self.n_classes, self.n_classes))
+        batch_pi = np.zeros(
+            (
+                batch_matrix.shape[1],
+                batch_matrix.shape[2],
+                batch_matrix.shape[2],
+            ),
+        )
 
-        for q in range(self.n_classes):
+        for q in range(batch_matrix.shape[2]):
             pij = batch_T[:, q] @ batch_matrix.transpose((1, 0, 2))
             denom = pij.sum(1)
             batch_pi[:, q, :] = pij / np.where(
@@ -489,26 +505,104 @@ class DawidSkeneOnline:
     def process_batch_matrix(
         self,
         batch_matrix: np.ndarray,
-        task_indices: list[int],
-        worker_indices: list[int],
-        class_indices: list[int],
+        task_mapping: TaskMapping,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
         maxiter: int = 50,
         epsilon: float = 1e-6,
     ) -> list[float]:
-        # TODO:@jzftran ensure capacity
-        if self.rho is None or self.pi is None or self.T is None:
-            # Initialization path (must infer dimensions from matrix)
-            self.n_task, self.n_workers, self.n_classes = batch_matrix.shape
-            self.rho = np.ones(self.n_classes) / self.n_classes
-            self.pi = np.ones((self.n_workers, self.n_classes, self.n_classes))
-            self.pi /= self.n_classes
-            self.T = self._init_T(batch_matrix)
+        self._ensure_capacity(
+            batch_matrix,
+        )
 
         return self._em_loop_on_batch(
             batch_matrix,
-            task_indices,
-            worker_indices,
-            class_indices,
+            task_mapping,
+            worker_mapping,
+            class_mapping,
             epsilon,
             maxiter,
         )
+
+
+dso = DawidSkeneOnline()
+
+votes = {
+    0: {
+        9: 1,
+    },
+    1: {
+        1: 1,
+        9: 1,
+    },
+    2: {
+        8: 0,
+    },
+    3: {
+        8: 8,
+    },
+    4: {
+        8: 8,
+    },
+    5: {
+        7: 3,
+    },
+    6: {
+        2: 4,
+        7: 4,
+    },
+    7: {
+        6: 4,
+    },
+    8: {
+        2: 1,
+        6: 4,
+    },
+    9: {
+        6: 4,
+    },
+    10: {
+        5: 6,
+    },
+    11: {
+        5: 5,
+    },
+    12: {
+        2: 6,
+        5: 6,
+    },
+    13: {
+        4: 7,
+    },
+    14: {
+        2: 7,
+        4: 7,
+    },
+    15: {
+        0: 7,
+        4: 7,
+    },
+    16: {
+        3: 8,
+    },
+    17: {
+        3: 8,
+    },
+    18: {
+        2: 9,
+    },
+    19: {
+        2: 9,
+    },
+}
+gen = batch_generator(votes, 30)
+# dso.prepare_mapping(votes, {}, {}, {})
+
+for b in gen:
+    dso.process_batch(b)
+print(dso.get_answers())
+
+
+ds = DawidSkene(votes, n_workers=10, n_classes=10)
+ds.run()
+print(ds.get_answers())
