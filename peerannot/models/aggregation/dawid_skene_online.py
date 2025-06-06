@@ -2,17 +2,20 @@
 from __future__ import annotations
 
 from itertools import batched
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+)
 
 import numpy as np
 from annotated_types import Ge, Gt
 from pydantic import validate_call
 
-from peerannot.models.aggregation.dawid_skene import DawidSkene
 from peerannot.models.aggregation.warnings import NotInitialized
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Hashable, Iterable, MutableMapping
 
     from peerannot.models.template import AnswersDict
 
@@ -20,6 +23,8 @@ type Mapping = dict[str | int, int]
 type WorkerMapping = Mapping
 type TaskMapping = Mapping
 type ClassMapping = Mapping
+type SliceLike = None | slice | int
+type Slices = SliceLike | tuple[SliceLike, ...]
 
 
 def batch_generator(
@@ -82,6 +87,58 @@ def batch_generator_by_user(
         yield {
             obs_id: votes for obs_id, votes in batch_answers.items() if votes
         }
+
+
+class NotNumpyArrayError(TypeError):
+    def __init__(self) -> None:
+        msg = "Input must be a NumPy array."
+        super().__init__(msg)
+
+
+class NotSliceError(TypeError):
+    def __init__(self) -> None:
+        msg = "Each slice must be a slice, int, or None."
+        super().__init__(msg)
+
+
+def slice_array(
+    arr: np.ndarray,
+    slc: Slices = None,
+) -> tuple[np.ndarray, list[dict[int, int]]]:
+    if not isinstance(arr, np.ndarray):
+        raise NotNumpyArrayError
+
+    if slc is None:
+        slc = ()
+    elif not isinstance(slc, tuple):
+        slc = (slc,)
+
+    normalized_slices: list[slice | int] = []
+    for s in slc:
+        if s is None:
+            normalized_slices.append(slice(None))
+        elif isinstance(s, (slice, int)):
+            normalized_slices.append(s)
+        else:
+            raise NotSliceError
+
+    full_slices = tuple(normalized_slices) + (slice(None),) * (
+        arr.ndim - len(normalized_slices)
+    )
+
+    sliced = arr[full_slices]
+
+    axis_mappings: list[dict[int, int]] = []
+    for axis, (s, dim_size) in enumerate(zip(full_slices, arr.shape)):
+        if isinstance(s, int):
+            continue  # skip reduced axis
+        indices = range(*s.indices(dim_size))
+        mapping = {
+            orig_idx: new_idx for new_idx, orig_idx in enumerate(indices)
+        }
+        axis_mappings.append(mapping)
+
+    return sliced, axis_mappings
 
 
 class DawidSkeneOnline:
@@ -213,13 +270,28 @@ class DawidSkeneOnline:
         new_array[slices] = old_array[slices]
         return new_array
 
-    def prepare_mapping(
+    def _prepare_mapping(
         self,
         batch: AnswersDict,
         task_mapping: TaskMapping,
         worker_mapping: WorkerMapping,
         class_mapping: ClassMapping,
-    ):
+    ) -> None:
+        """
+        Updates the provided mappings in-place by assigning new unique indices
+        to any previously unseen task IDs, worker IDs, or class IDs found in the batch.
+
+        This function does **not** return any value. All changes are applied directly
+        to the input `task_mapping`, `worker_mapping`, and `class_mapping` dictionaries.
+
+        Parameters:
+        -----------
+            batch (AnswersDict): A nested dictionary of the form {task_id: {worker_id: class_id}}.
+            task_mapping (dict): A mutable mapping from task_id to an integer index.
+            worker_mapping (dict): A mutable mapping from worker_id to an integer index.
+            class_mapping (dict): A mutable mapping from class_id to an integer index.
+        """
+
         for task_id, worker_class in batch.items():
             if task_id not in task_mapping:
                 task_mapping[task_id] = len(task_mapping)
@@ -229,7 +301,23 @@ class DawidSkeneOnline:
                 if class_id not in class_mapping:
                     class_mapping[class_id] = len(class_mapping)
 
-        return task_mapping, worker_mapping, class_mapping
+    def _ensure_mapping(
+        self,
+        mapping: MutableMapping[Hashable, int],
+        keys: Iterable[Hashable],
+    ) -> None:
+        """
+        Ensures that all keys in the provided iterable are present in the mapping.
+        If a key is missing, it is assigned the next available unique index.
+
+        Parameters:
+        -----------
+        mapping (MutableMapping): The dictionary mapping each key to a unique int index.
+        keys (Iterable): The keys that need to be present in the mapping.
+        """
+        for key in keys:
+            if key not in mapping:
+                mapping[key] = len(mapping)
 
     def _process_batch_to_matrix(
         self,
@@ -282,20 +370,15 @@ class DawidSkeneOnline:
 
         Returns list of log-likelihoods."""
 
-        self.task_mapping, self.worker_mapping, self.class_mapping = (
-            self.prepare_mapping(
-                batch,
-                self.task_mapping,
-                self.worker_mapping,
-                self.class_mapping,
-            )
-        )
+        task_mapping: TaskMapping = {}
+        worker_mapping: WorkerMapping = {}
+        class_mapping: ClassMapping = {}
 
-        task_mapping, worker_mapping, class_mapping = self.prepare_mapping(
+        self._prepare_mapping(
             batch,
-            {},
-            {},
-            {},
+            task_mapping,
+            worker_mapping,
+            class_mapping,
         )
 
         batch_matrix = self._process_batch_to_matrix(
@@ -309,16 +392,16 @@ class DawidSkeneOnline:
             task_mapping,
             worker_mapping,
             class_mapping,
-            epsilon,
             maxiter,
+            epsilon,
         )
 
     def _em_loop_on_batch(
         self,
         batch_matrix: np.ndarray,
-        task_mapping,
-        worker_mapping,
-        class_mapping,
+        task_mapping: TaskMapping,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
         epsilon: Annotated[float, Ge(0)] = 1e-6,
         maxiter: Annotated[int, Gt(0)] = 50,
     ) -> list[float]:
@@ -511,6 +594,10 @@ class DawidSkeneOnline:
         maxiter: int = 50,
         epsilon: float = 1e-6,
     ) -> list[float]:
+        self._ensure_mapping(self.task_mapping, list(task_mapping))
+        self._ensure_mapping(self.worker_mapping, list(worker_mapping))
+        self._ensure_mapping(self.class_mapping, list(class_mapping))
+
         self._ensure_capacity(
             batch_matrix,
         )
@@ -523,86 +610,3 @@ class DawidSkeneOnline:
             epsilon,
             maxiter,
         )
-
-
-dso = DawidSkeneOnline()
-
-votes = {
-    0: {
-        9: 1,
-    },
-    1: {
-        1: 1,
-        9: 1,
-    },
-    2: {
-        8: 0,
-    },
-    3: {
-        8: 8,
-    },
-    4: {
-        8: 8,
-    },
-    5: {
-        7: 3,
-    },
-    6: {
-        2: 4,
-        7: 4,
-    },
-    7: {
-        6: 4,
-    },
-    8: {
-        2: 1,
-        6: 4,
-    },
-    9: {
-        6: 4,
-    },
-    10: {
-        5: 6,
-    },
-    11: {
-        5: 5,
-    },
-    12: {
-        2: 6,
-        5: 6,
-    },
-    13: {
-        4: 7,
-    },
-    14: {
-        2: 7,
-        4: 7,
-    },
-    15: {
-        0: 7,
-        4: 7,
-    },
-    16: {
-        3: 8,
-    },
-    17: {
-        3: 8,
-    },
-    18: {
-        2: 9,
-    },
-    19: {
-        2: 9,
-    },
-}
-gen = batch_generator(votes, 30)
-# dso.prepare_mapping(votes, {}, {}, {})
-
-for b in gen:
-    dso.process_batch(b)
-print(dso.get_answers())
-
-
-ds = DawidSkene(votes, n_workers=10, n_classes=10)
-ds.run()
-print(ds.get_answers())
