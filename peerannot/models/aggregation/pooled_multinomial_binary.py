@@ -5,14 +5,17 @@ from peerannot.models import DawidSkene
 
 class PoooledMultinomialBinary(DawidSkene):
     def _init_T(self) -> None:
-        # T shape n_tasks, n classes
         self.n_il = np.sum(
             self.crowd_matrix,
             axis=1,
         )  # n_tasks, n_classes: sum of votes given by each worker
 
-        n_i = np.sum(self.n_il, axis=0)
-        # n_i_safe = np.where(n_i == 0, 1, n_i)
+        n_i = np.sum(
+            self.n_il,
+            axis=1,
+            keepdims=True,
+        )  # total number of votes per task
+
         self.total_votes = np.sum(self.n_il)
 
         self.T = np.divide(
