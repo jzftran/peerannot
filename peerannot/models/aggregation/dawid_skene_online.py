@@ -326,6 +326,41 @@ class DawidSkeneOnline:
         worker_mapping: WorkerMapping,
         class_mapping: ClassMapping,
     ) -> np.ndarray:
+        """
+        Convert a batch of task (AnswerDict) assignments to a matrix format.
+
+        Processes a batch of tasks, where each task is associated with a set
+        of workers and their corresponding labels.
+        Converts this batch into a tensor indicating which workers are
+        assigned to which labels for each task. The resulting tensor
+        has dimensions corresponding to the number of
+        tasks, workers, and classes.
+
+        Parameters:
+        ----------
+        batch : dict[int, dict[int, int]]
+            A dictionary where keys are task IDs (integers) and values
+            are dictionaries mapping worker IDs (integers)
+            to their assigned labels (integers).
+
+        task_mapping: TaskMapping
+            A dictionary where keys are the original indices or task names,
+            and the values are the indices in the resulting batch matrix
+        worker_mapping WorkerMapping
+        class_mapping ClassMapping
+
+        Returns:
+        -------
+        tuple[np.ndarray, list[int]]
+            A tuple containing:
+            - batch_matrix: A tensor array of shape
+                (batch_size, n_workers, n_classes) where each entry is
+                a boolean indicating whether a worker is assigned
+                to a label for a task.
+            - task_indices: A sorted list of task IDs corresponding to
+                the rows of the batch_matrix.
+        """
+
         num_tasks = len(task_mapping)
         num_users = len(worker_mapping)
         num_labels = len(class_mapping)
@@ -610,3 +645,6 @@ class DawidSkeneOnline:
             epsilon,
             maxiter,
         )
+
+
+# %%
