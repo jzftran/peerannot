@@ -10,7 +10,14 @@ class MultinomialBinary(DawidSkene):
 
         pi = np.zeros(self.n_workers)
         for j in range(self.n_workers):
-            alpha = (self.T * self.crowd_matrix[:, j, :]).sum() / self.n_task
+            labeled_count = self.crowd_matrix[:, j, :].sum()
+            weighted_sum = (self.T * self.crowd_matrix[:, j, :]).sum()
+            alpha = np.divide(
+                weighted_sum,
+                labeled_count,
+                out=np.zeros_like(weighted_sum),
+                where=labeled_count > 0,
+            )
             pi[j] = alpha
 
         off_diag_alpha = (np.ones_like(pi) - pi) / (self.n_classes - 1)
