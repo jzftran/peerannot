@@ -1,3 +1,4 @@
+# %%
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -85,7 +86,6 @@ class DawidSkeneRetroactive(DawidSkeneOnline):
         ll = super().process_batch(batch, maxiter, epsilon)
 
         self._perform_retroactive_updates()
-
         return ll
 
     def _perform_retroactive_updates(self) -> None:
@@ -99,22 +99,10 @@ class DawidSkeneRetroactive(DawidSkeneOnline):
         for task_id, task_idx in self.task_mapping.items():
             if task_id < len(self.prev_task_estimates):
                 prev_estimate = self.prev_task_estimates[task_id]
-                current_estimate = self.T[task_idx]
-
-                if len(prev_estimate) < len(current_estimate):
-                    prev_estimate = self._expand_array(
-                        prev_estimate.reshape(1, -1),
-                        (1, len(current_estimate)),
-                        fill_value=0.0,
-                    ).flatten()
-                elif len(prev_estimate) > len(current_estimate):
-                    prev_estimate = prev_estimate[: len(current_estimate)]
-
-                if (
-                    np.linalg.norm(prev_estimate - current_estimate)
-                    > self.change_tresh
-                ):
-                    changed_tasks[task_id] = task_idx
+                if prev_estimate.size > 0:
+                    current_estimate = self.T[task_idx]
+                    if np.argmax(prev_estimate) != np.argmax(current_estimate):
+                        changed_tasks[task_id] = task_idx
 
         if not changed_tasks:
             return
@@ -134,5 +122,4 @@ class DawidSkeneRetroactive(DawidSkeneOnline):
             if task_id not in retro_batch:
                 retro_batch[task_id] = {}
             retro_batch[task_id][worker_id] = class_id
-
         self.process_batch(retro_batch, maxiter=3)
