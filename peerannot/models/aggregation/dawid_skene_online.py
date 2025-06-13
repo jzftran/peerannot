@@ -6,6 +6,7 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    Callable,
 )
 
 import numpy as np
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
 
     from peerannot.models.template import AnswersDict
 
-type Mapping = dict[str | int, int]
+type Mapping = dict[Hashable, int]
 type WorkerMapping = Mapping
 type TaskMapping = Mapping
 type ClassMapping = Mapping
@@ -176,6 +177,9 @@ class DawidSkeneOnline:
     def _ensure_capacity(
         self,
         batch_matrix: np.ndarray,
+        task_mapping: TaskMapping,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
     ) -> None:
         """Ensure internal parameters accommodate all workers, classes, and tasks in the batch."""
 
@@ -192,33 +196,51 @@ class DawidSkeneOnline:
 
             self.rho, self.pi = self._m_step(
                 batch_matrix,
-                self._init_T(batch_matrix),
+                self._init_T(
+                    batch_matrix,
+                    task_mapping,
+                    worker_mapping,
+                    class_mapping,
+                ),
             )
             self.T, _ = self._e_step(batch_matrix, self.pi, self.rho)
             return
 
-        # Expand rho
         if new_n_classes > self.n_classes:
             old_rho = self.rho
-            self.rho = np.ones(new_n_classes) / new_n_classes
-            self.rho[: self.n_classes] = old_rho * (
-                self.n_classes / new_n_classes
-            )
+            self.rho = np.zeros(new_n_classes)
+            self.rho[: self.n_classes] = old_rho
+            n_new = new_n_classes - self.n_classes
+            if n_new > 0:
+                self.rho[self.n_classes :] = 1.0 / new_n_classes
+
+            self.rho /= self.rho.sum()
 
         # Expand pi
         if new_n_workers > self.n_workers or new_n_classes > self.n_classes:
             self.pi = self._expand_array(
                 self.pi,
                 (new_n_workers, new_n_classes, new_n_classes),
+                fill_value=0.0,
+                # fill_value=np.array(
+                #     [np.eye(new_n_classes) for _ in range(new_n_workers)],
+                # ),
             )
 
-        # Expand T
-        if new_n_classes > self.T.shape[1]:
+        # Expand T if number of tasks or classes increases
+        new_shape = (
+            max(self.T.shape[0], new_n_task),
+            max(self.T.shape[1], new_n_classes),
+        )
+        if new_shape != self.T.shape:
             self.T = self._expand_array(
                 self.T,
-                (max(self.T.shape[0], new_n_task), new_n_classes),
+                new_shape,
                 fill_value=1.0 / new_n_classes,
             )
+
+        # If number of classes increased, scale the existing values
+        if new_n_classes > self.n_classes:
             self.T[:, : self.n_classes] *= self.n_classes / new_n_classes
 
         # Finalize updated dimensions
@@ -230,7 +252,9 @@ class DawidSkeneOnline:
         self,
         old_array: np.ndarray,
         new_shape: tuple[int, ...],
-        fill_value: float = 0.0,
+        fill_value: float
+        | Callable[[tuple[int, ...]], np.ndarray]
+        | np.ndarray = 0.0,
     ) -> np.ndarray:
         """Expand an existing array to a new shape.
 
@@ -250,7 +274,7 @@ class DawidSkeneOnline:
             The dimensions must be greater than or equal to the corresponding
             dimensions of the old array.
 
-        fill_value : float, optional
+        fill_value : float, Callable[[tuple[int, ...]], np.ndarray], optional
             The value to fill the new elements of the array. Default is 0.0.
 
         Returns:
@@ -259,15 +283,45 @@ class DawidSkeneOnline:
             A new array with the specified shape, containing the contents of the old array
             and filled with the specified fill value for any additional elements.
         """
-        new_array = (
-            np.full(new_shape, fill_value)
-            if fill_value == 0
-            else np.zeros(new_shape)
+
+        if old_array is None:
+            raise ValueError("old_array cannot be None")
+
+        if callable(fill_value):
+            new_array = fill_value(new_shape)
+        elif isinstance(fill_value, np.ndarray):
+            new_array = fill_value
+        else:
+            new_array = np.full(new_shape, fill_value)
+
+        if old_array.ndim == 0:
+            old_shape = (1,)
+            old_array = old_array.reshape(1)
+        else:
+            old_shape = old_array.shape
+
+        padded_old_shape = list(old_shape)
+        while len(padded_old_shape) < len(new_shape):
+            padded_old_shape.append(1)
+
+        min_shape = tuple(
+            min(o, n) for o, n in zip(padded_old_shape, new_shape)
         )
-        slices = tuple(
-            slice(0, min(o, n)) for o, n in zip(old_array.shape, new_shape)
-        )
-        new_array[slices] = old_array[slices]
+
+        if len(padded_old_shape) > old_array.ndim:
+            new_old_shape = tuple(padded_old_shape)
+            old_array_reshaped = old_array.reshape(new_old_shape)
+        else:
+            old_array_reshaped = old_array
+
+        if old_array_reshaped.size == 0 or any(m == 0 for m in min_shape):
+            return new_array
+
+        old_slices = tuple(slice(0, m) for m in min_shape)
+        new_slices = tuple(slice(0, m) for m in min_shape)
+
+        new_array[new_slices] = old_array_reshaped[old_slices]
+
         return new_array
 
     def _prepare_mapping(
@@ -378,10 +432,39 @@ class DawidSkeneOnline:
                 batch_matrix[task_index, user_index, label_index] = True
         return batch_matrix
 
-    def _init_T(self, batch_matrix: np.ndarray) -> np.ndarray:
+    def _init_T(
+        self,
+        batch_matrix: np.ndarray,
+        task_mapping: TaskMapping,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
+    ) -> np.ndarray:
+        if self.T is None:
+            T = batch_matrix.sum(axis=1)
+            tdim = T.sum(1, keepdims=True)
+            return np.where(tdim > 0, T / tdim, 0)
+
         T = batch_matrix.sum(axis=1)
         tdim = T.sum(1, keepdims=True)
-        return np.where(tdim > 0, T / tdim, 0)
+        batch_T = np.where(tdim > 0, T / tdim, 0)
+
+        for batch_task_idx in task_mapping:
+            if global_task_idx := self.task_mapping.get(batch_task_idx):
+                for batch_class_idx in class_mapping:
+                    if global_class_idx := self.class_mapping.get(
+                        batch_class_idx,
+                    ):
+                        batch_T[
+                            task_mapping[batch_task_idx],
+                            class_mapping[batch_class_idx],
+                        ] = self.T[
+                            global_task_idx,
+                            global_class_idx,
+                        ]
+
+        batch_T /= batch_T.sum(axis=1, keepdims=True)
+
+        return batch_T
 
     def get_probas(self) -> np.ndarray:
         """Get current estimates of task-class probabilities"""
@@ -443,7 +526,12 @@ class DawidSkeneOnline:
         i = 0
         eps = np.inf
         ll: list[float] = []
-        batch_T = self._init_T(batch_matrix)
+        batch_T = self._init_T(
+            batch_matrix,
+            task_mapping,
+            worker_mapping,
+            class_mapping,
+        )
 
         while i < maxiter and eps > epsilon:
             batch_rho, batch_pi = self._m_step(batch_matrix, batch_T)
@@ -461,16 +549,8 @@ class DawidSkeneOnline:
 
         # Online updates
         # TODO:@jzftran vectorization?
-
         for task, batch_task_idx in task_mapping.items():
             task_idx = self.task_mapping[task]
-
-            if task_idx >= self.T.shape[0]:
-                self.T = self._expand_array(
-                    self.T,
-                    (task_idx + 1, self.n_classes),
-                    fill_value=1.0 / self.n_classes,
-                )
 
             for class_name, batch_class_idx in class_mapping.items():
                 class_idx = self.class_mapping[class_name]
@@ -479,6 +559,8 @@ class DawidSkeneOnline:
                     + batch_T[batch_task_idx][batch_class_idx] * self.gamma
                 )
 
+            self.T[task_idx] /= self.T[task_idx].sum()
+
         # Update only classes present in the batch
         for class_name, batch_class_idx in class_mapping.items():
             class_idx = self.class_mapping[class_name]
@@ -486,6 +568,8 @@ class DawidSkeneOnline:
                 self.rho[class_idx] * (1 - self.gamma)
                 + batch_rho[batch_class_idx] * self.gamma
             )
+            # renormalize
+        self.rho /= self.rho.sum()
 
         # Update only workers present in the batch
         for worker, batch_worker_idx in worker_mapping.items():
@@ -506,6 +590,10 @@ class DawidSkeneOnline:
                     ] + self.gamma * batch_pi[batch_worker_idx][i_batch][
                         j_batch
                     ]
+
+                row_sum = self.pi[worker_idx, i_global, :].sum()
+                if row_sum > 0:
+                    self.pi[worker_idx, i_global, :] /= row_sum
 
         return ll
 
@@ -635,6 +723,9 @@ class DawidSkeneOnline:
 
         self._ensure_capacity(
             batch_matrix,
+            task_mapping,
+            worker_mapping,
+            class_mapping,
         )
 
         return self._em_loop_on_batch(
@@ -645,6 +736,3 @@ class DawidSkeneOnline:
             epsilon,
             maxiter,
         )
-
-
-# %%
