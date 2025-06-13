@@ -1,4 +1,3 @@
-# %%
 from __future__ import annotations
 
 from itertools import batched
@@ -199,7 +198,6 @@ class DawidSkeneOnline:
                 self._init_T(
                     batch_matrix,
                     task_mapping,
-                    worker_mapping,
                     class_mapping,
                 ),
             )
@@ -436,7 +434,6 @@ class DawidSkeneOnline:
         self,
         batch_matrix: np.ndarray,
         task_mapping: TaskMapping,
-        worker_mapping: WorkerMapping,
         class_mapping: ClassMapping,
     ) -> np.ndarray:
         if self.T is None:
@@ -529,7 +526,6 @@ class DawidSkeneOnline:
         batch_T = self._init_T(
             batch_matrix,
             task_mapping,
-            worker_mapping,
             class_mapping,
         )
 
