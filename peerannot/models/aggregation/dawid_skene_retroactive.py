@@ -1,17 +1,9 @@
 from __future__ import annotations
 
+from functools import wraps
 from typing import TYPE_CHECKING
 
 import numpy as np
-
-if TYPE_CHECKING:
-    from collections.abc import Hashable
-
-    from peerannot.models.template import AnswersDict
-from functools import wraps
-from typing import (
-    TYPE_CHECKING,
-)
 
 from peerannot.models.aggregation.dawid_skene_online import (
     DawidSkeneOnline,
