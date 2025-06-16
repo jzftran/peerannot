@@ -1,12 +1,10 @@
 import warnings
 from collections.abc import Generator
-from sys import getsizeof
 from typing import Annotated, Any, Self
 
 import numpy as np
 import sparse as sp
 from annotated_types import Ge
-from loguru import logger
 from numpy.typing import NDArray
 from pydantic import validate_call
 from tqdm.auto import tqdm
@@ -106,9 +104,6 @@ class DawidSkene(CrowdModel):
             for worker, label in ans.items():
                 matrix[task, worker, label] = 1
         self.crowd_matrix = matrix
-        logger.debug(
-            f"Size of dense crowd matrix: {getsizeof(self.crowd_matrix)}",
-        )
 
     def _init_T(self) -> None:  # noqa: N802
         """NS initialization"""
@@ -237,9 +232,6 @@ class DawidSkeneSparse(DawidSkene):
                 crowd_matrix[task, worker, label] = 1
 
         self.crowd_matrix = crowd_matrix.to_coo()
-        logger.debug(
-            f"Size of sparse crowd matrix: {getsizeof(self.crowd_matrix)}",
-        )
 
     def _init_T(self) -> None:
         """NS initialization"""
