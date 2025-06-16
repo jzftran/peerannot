@@ -41,9 +41,8 @@ def limit_recursion(max_depth: int):
 
 
 class DawidSkeneRetroactive(DawidSkeneOnline):
-    def __init__(self, change_tresh: float = 0.1, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.change_tresh = change_tresh
 
         # Store past observations as a list of tuples (task_id, worker_id, class_id)
         # Should this be stored as crowd_matrix?
