@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 from pydantic import validate_call
 from tqdm.auto import tqdm
 
-from peerannot.models.aggregation.warnings import DidNotConverge
+from peerannot.models.aggregation.warnings_errors import DidNotConverge
 from peerannot.models.template import AnswersDict, CrowdModel
 
 
