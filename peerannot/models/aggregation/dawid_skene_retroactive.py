@@ -1,4 +1,3 @@
-# %%
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -30,9 +29,8 @@ def limit_recursion(max_depth: int):
         def wrapper(*args, **kwargs):
             depth = kwargs.pop("_depth", 0)
             if depth > max_depth:
-                raise RecursionError(
-                    f"Max recursion depth {max_depth} exceeded",
-                )
+                msg = f"Max recursion depth {max_depth} exceeded"
+                raise RecursionError(msg)
             return func(*args, **kwargs, _depth=depth + 1)
 
         return wrapper
