@@ -36,19 +36,19 @@ class DawidSkene(CrowdModel):
         n_workers: Annotated[int, Ge(1)],
         n_classes: Annotated[int, Ge(1)],
     ) -> None:
-        r"""Dawid and Skene strategy: estimate confusion matrix for each worker.
+        """Dawid and Skene strategy: estimate confusion matrix for each worker.
 
         Assuming that workers are independent, the model assumes that
 
         .. math::
 
-            (y_i^{(j)}\ | y_i^\\star = k) \\sim \\mathcal{M}\\left(\\pi^{(j)}_{k,\\cdot}\\right)
+            (y_i^{(j)}\\ | y_i^{\\star} = k) \\sim \\mathcal{M}\\left(\\pi^{(j)}_{k,\\cdot}\\right)
 
         and maximizes the log likelihood of the model using an EM algorithm.
 
         .. math::
 
-            \\underset{\\rho,\\\pi,T}{\mathrm{argmax}}\\prod_{i\\in [n_{\\texttt{task}}]}\prod_{k \\in [K]}\\bigg[\\rho_k\prod_{j\\in [n_{\\texttt{worker}}]}\prod_{\\ell\in [K]}\\big(\\pi^{(j)}_{k, \\ell}\\big)^{\mathbf{1}_{\\{y_i^{(j)}=\\ell\\}}}\\bigg]^{T_{i,k}},
+            \\underset{\\rho,\\\\pi,T}{\\mathrm{argmax}}\\prod_{i\\in [n_{\\texttt{task}}]}\\prod_{k \\in [K]}\\bigg[\\rho_k\\prod_{j\\in [n_{\\texttt{worker}}]}\\prod_{\\ell\\in [K]}\\big(\\pi^{(j)}_{k, \\ell}\\big)^{\\mathbf{1}_{\\{y_i^{(j)}=\\ell\\}}}\\bigg]^{T_{i,k}},
 
         where :math:`\\rho` is the class marginals, :math:`\\pi` is the confusion matrix and :math:`T` is the indicator variables of belonging to each class.
 

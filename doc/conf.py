@@ -68,8 +68,10 @@ author = "peerannot contributors"
 # built documents.
 #
 # The short X.Y version.
-from peerannot import __version__ as version  # noqa
-
+try:
+    from peerannot import __version__ as version
+except:
+    version = "0.1"
 # The full version, including alpha/beta/rc tags.
 release = version
 
@@ -211,9 +213,10 @@ copybutton_prompt_text = (
 copybutton_prompt_is_regexp = True
 
 autodoc_default_options = {
-    "members": "var1, var2",
+    "members": True,
     "member-order": "bysource",
     "special-members": "__init__",
     "undoc-members": True,
     "exclude-members": "__weakref__",
+    "private-members": True,
 }

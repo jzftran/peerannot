@@ -30,6 +30,12 @@ All aggregation-based strategies are available running:
     Wawa.Wawa
     IWMV.IWMV
     dawid_skene.DawidSkene
+    dawid_skene_online.DawidSkeneOnline
+    dawid_skene_retroactive.DawidSkeneRetroactive
+    multinomial_binary.MultinomialBinary
+    pooled_diagonal_multinomial.PooledDiagonalMultinomial
+    diagonal_multinomial.DiagonalMultinomial
+    diagonal_multinomial.VectorizedDiagonalMultinomial
     GLAD.GLAD
     plantnet.PlantNet
     twothird.TwoThird

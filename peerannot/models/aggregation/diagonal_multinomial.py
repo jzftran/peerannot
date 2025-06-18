@@ -4,8 +4,79 @@ from .dawid_skene import DawidSkene
 
 
 class DiagonalMultinomial(DawidSkene):
+    """
+    ====================
+    Diagonal Multinomial
+    ====================
+
+    A simplified variant of the Dawid and Skene model (1979),
+    assuming workers only make diagonal errors in the confusion matrix.
+
+
+    Assumptions:
+
+    - workers are independent
+
+    - each worker is only characterized by their reliability in recognizing the correct class
+
+    - all errors (misclassifications) are uniformly distributed among the incorrect classes
+
+    Using:
+
+    - EM algorithm
+
+    Estimating:
+
+    - One diagonal of the confusion matrix for each worker
+
+
+
+    For a worker $j$ labeling a task $i$, we assume:
+
+    .. math::
+
+        P(y_i^{(j)} = \\ell \\mid y_i^* = k) = \\begin{cases} \\pi_{j, k} & \\text{if} \\ell = k \\\\
+        \\frac{1 - \\pi_{j, k}}{K - 1} & \\text{otherwise} \\end{cases}
+
+
+
+    where:
+
+    * $y_i^{\\star} \\in \\{0, ..., K-1\\}$ is the true class label for task $i$,
+    * $\\pi_{j,k} \\in [0,1]$ is the probability that worker $j$ correctly identifies class $k$,
+    * $K$ is the number of classes.
+
+    This model keeps only the diagonal of each worker's confusion matrix and assumes the rest is constant.
+
+
+
+
+    """
+
     def _m_step(self) -> None:
-        """Maximizing log likelihood with only diagonal elements of pi."""
+        """
+        Update parameters :math:`\\rho_k` and :math:`\\pi_{j,k}` using current posterior :math:`T`.
+
+        **Class priors**:
+
+        :math:`\\rho_k = \\frac{1}{n} \\sum_{i=1}^{n} T_{i,k}`
+
+        **Worker diagonal accuracies**:
+
+        .. math::
+
+            \\pi_{j,k} = \\frac{\\sum_{i=1}^{n} T_{i,k} \\cdot \\mathbb{1}_{y_i^{(j)} = k}}{\\sum_{i=1}^{n} T_{i,k} \\cdot \\sum_{\\ell} \\mathbb{1}_{y_i^{(j)} = \\ell}}
+
+
+        This gives the fraction of times worker :math:`j` labels class :math:`k` correctly when it is estimated to be class :math:`k`.
+
+        * **Off-diagonal errors**:
+
+        .. math::
+
+            \\pi^{\\text{off}}_{j,k} = \\frac{1 - \\pi_{j,k}}{K - 1}
+
+        """
         rho = self.T.sum(0) / self.n_task
 
         pi = np.zeros((self.n_workers, self.n_classes))
@@ -27,6 +98,20 @@ class DiagonalMultinomial(DawidSkene):
         )
 
     def _e_step(self) -> None:
+        """
+
+        Estimate the posterior probability :math:`T_{i,k}` that task :math:`i`
+        belongs to class :math:`k`, given current estimates of class marginals
+        :math:`\\rho_k` and diagonal worker accuracies :math:`\\pi_{j,k}`:
+
+        .. math::
+
+            T_{i,k} \\propto \\rho_k \\prod_{j=1}^{W}\\left[ \\pi_{j,k}^{\\mathbb{1}(y_i^{(j)} = k)} \\cdot \\left( \\frac{1 - \\pi_{j,k}}{K - 1} \\right)^{\\sum_{\\ell \\neq k} \\mathbb{1}(y_i^{(j)} = \\ell)} \\right]
+
+        Normalize over :math:`k \\in \\{0, ..., K-1\\}` to get :math:`T_{i,k}`.
+
+        """
+
         T = np.zeros((self.n_task, self.n_classes))
 
         for i in range(self.n_task):
@@ -70,8 +155,13 @@ class DiagonalMultinomial(DawidSkene):
 
 
 class VectorizedDiagonalMultinomial(DiagonalMultinomial):
+    """
+    A vectorized and optimized version of `DiagonalMultinomial`,
+    implementing the same model assumptions, but using
+    NumPy broadcasting (`einsum`, masking, etc.) for speed.
+    """
+
     def _m_step(self) -> None:
-        """Maximizing log likelihood with only diagonal elements of pi."""
         rho = self.T.sum(0) / self.n_task
         pij = np.einsum("tq,tiq->iq", self.T, self.crowd_matrix)
         denom = np.einsum("tq, tij -> iq", self.T, self.crowd_matrix)
@@ -86,7 +176,6 @@ class VectorizedDiagonalMultinomial(DiagonalMultinomial):
         )
 
     def _e_step(self) -> None:
-        """Vectorized implementation of e-step without worker loops."""
         # Compute diagonal contributions
         # shape: (n_task, n_workers, n_classes)
         diag_contrib = np.power(
