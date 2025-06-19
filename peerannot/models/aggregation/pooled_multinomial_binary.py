@@ -4,7 +4,41 @@ from peerannot.models import DawidSkene
 
 
 class PoooledMultinomialBinary(DawidSkene):
+    """
+    =========================
+    Pooled Multinomial Binary
+    =========================
+
+
+    A simplified variant of the Dawid & Skene model where:
+        - A single accuracy parameter (`alpha`) is used across all workers.
+        - Off-diagonal errors are assumed to be uniformly distributed.
+        - Votes are pooled across all workers (no per-worker confusion matrix).
+
+    Assumptions:
+        - Workers are the same.
+        - Diagonal entries (correct labels) use a single shared alpha value.
+        - Errors are symmetric across all incorrect labels (off-diagonal entries are equal).
+        - Labels are conditionally independent given the true label.
+
+
+    Suitable for low-data regimes or settings with homogeneous labelers.
+    """
+
     def _init_T(self) -> None:
+        """
+        Initialize posterior :math:`T_{i,\\ell}` using normalized majority voting.
+
+        Let:
+        - :math:`n_{i,\\ell}` = number of annotators labeling task :math:`i` as class :math:`\\ell`
+        - :math:`n_i = \\sum_{\\ell=1}^K n_{i,\\ell}` = total number of votes on task :math:`i`
+
+        Then:
+
+        .. math::
+            T_{i,\\ell} = \\frac{n_{i,\\ell}}{n_i}
+        """
+
         self.n_il = np.sum(
             self.crowd_matrix,
             axis=1,
@@ -26,8 +60,20 @@ class PoooledMultinomialBinary(DawidSkene):
         )
 
     def _m_step(self) -> None:
-        """Maximizing log likelihood with a single confusion matrix shared
-        across all workers."""
+        """
+        M-step: maximize the expected complete log-likelihood under the shared accuracy model.
+
+        Update estimates for:
+        - Class priors:
+
+        .. math::
+            \\rho_{\\ell} = \\frac{1}{n_{\\text{task}}} \\sum_{i=1}^{n_{\\text{task}}} T_{i,\\ell}
+
+        - Shared accuracy:
+
+        .. math::
+            \\alpha = \\frac{\\sum\\limits_{i=1}^{n_{\\text{task}}} \\sum\\limits_{\\ell=1}^K T_{i,\\ell} \\cdot n_{i,\\ell}}{\\sum\\limits_{i=1}^{n_{\\text{task}}} n_i}
+        """
 
         self.rho = self.T.sum(0) / self.n_task
 
@@ -40,6 +86,31 @@ class PoooledMultinomialBinary(DawidSkene):
         self.alpha = sum_diag_votes / self.total_votes
 
     def _e_step(self) -> None:
+        """
+        E-step: update soft-labels :math:`T_{i,\\ell}` using current :math:`\\rho` and :math:`\\alpha`.
+
+        For each task :math:`i` and label :math:`\\ell`, compute the unnormalized posterior:
+
+        Let:
+        - :math:`n_{i,\\ell}` = number of annotators who labeled task :math:`i` as class :math:`\\ell`
+        - :math:`n_i` = total annotations on task :math:`i`
+
+        Then:
+
+        .. math::
+            T_{i,\\ell} =
+            \\frac{
+                \\rho_{\\ell} \\cdot
+                \\alpha^{n_{i,\\ell}} \\cdot
+                \\left( \\frac{1 - \\alpha}{K - 1} \\right)^{n_i - n_{i,\\ell}}
+            }{
+                \\sum\\limits_{\\ell'=1}^K
+                \\rho_{\\ell'} \\cdot
+                \\alpha^{n_{i,\\ell'}} \\cdot
+                \\left( \\frac{1 - \\alpha}{K - 1} \\right)^{n_i - n_{i,\\ell'}}
+            }
+        """
+
         T = np.zeros((self.n_task, self.n_classes))
 
         for i in range(self.n_task):

@@ -4,8 +4,59 @@ from peerannot.models import DawidSkene
 
 
 class MultinomialBinary(DawidSkene):
+    """
+    ===================
+    Multinomial Binary
+    ===================
+
+    A simplified variation of the Dawid & Skene (1979) model where:
+
+    - Each worker's labeling behavior is characterized by a single accuracy value
+        (diagonal value alpha),
+    - All incorrect labels (off-diagonal) are uniformly distributed across
+        the remaining classes,
+    - Off-diagonal error rates are derived from alpha and are shared across all classes,
+    - Workers are assumed to be independent.
+
+
+    Assumptions:
+        - independent workers
+        - worker can be either good or bad
+    Using:
+        - EM algorithm
+
+    Esimating:
+        - One single value for each worker
+
+    """
+
     def _m_step(self) -> None:
-        """Maximizing log likelihood with only diagonal elements of pi."""
+        """
+        M-step of the EM algorithm.
+
+        Maximizes the expected log-likelihood with respect to:
+        - Class prior probabilities :math:`\\rho`
+        - Per-worker accuracy parameters :math:`\\pi_j` (diagonal values only)
+
+        For each worker :math:`j`, we estimate accuracy as:
+
+        .. math::
+            \\pi_j = \\frac{
+                \\sum_{i,k} T_{i,k} \\cdot \\mathbb{1}(y_i^{(j)} = k)
+            }{
+                \\sum_{i} \\sum_{k} \\mathbb{1}(y_i^{(j)} = k)
+            }
+
+        The off-diagonal confusion values are set uniformly as:
+
+        .. math::
+            \\pi_{j, \\ell \\neq k} = \\frac{1 - \\pi_j}{K - 1}
+
+        Updates:
+            - `self.rho` : Class priors (shape: n_classes)
+            - `self.pi` : Per-worker diagonal accuracy (shape: n_workers)
+            - `self.off_diag_alpha` : Uniform off-diagonal error values (shape: n_workers)
+        """
         rho = self.T.sum(0) / self.n_task
 
         pi = np.zeros(self.n_workers)
@@ -24,12 +75,34 @@ class MultinomialBinary(DawidSkene):
         self.rho, self.pi, self.off_diag_alpha = rho, pi, off_diag_alpha
 
     def _e_step(self) -> None:
-        """Estimate indicator variables (see eq. 2.5 Dawid and Skene 1979)
-
-        Returns:
-            T: New estimate for indicator variables (n_task, n_worker)
-            denom: value used to compute likelihood easily
         """
+        E-step of the EM algorithm.
+
+        Estimates posterior probabilities :math:`T_{i,k}` for each task :math:`i`
+        and class :math:`k`, using current estimates of `rho`, `pi`, and
+        `off_diag_alpha`.
+
+        For each task and class, we compute:
+
+        .. math::
+            T_{i,k} =
+                \\frac{
+                    \\rho_k \\cdot \\prod_{j=1}^{W}
+                    \\left[
+                        \\pi_j^{\\mathbb{1}(y_i^{(j)} = k)} \\cdot
+                        \\left( \\frac{1 - \\pi_j}{K - 1} \\right)^{\\sum_{\\ell \\neq k} \\mathbb{1}(y_i^{(j)} = \\ell)}
+                    \\right]
+                }{
+                    \\sum_{k'=1}^{K}
+                    \\rho_{k'} \\cdot \\prod_{j=1}^{W}
+                    \\left[
+                        \\pi_j^{\\mathbb{1}(y_i^{(j)} = k')} \\cdot
+                        \\left( \\frac{1 - \\pi_j}{K - 1} \\right)^{\\sum_{\\ell \\neq k'} \\mathbb{1}(y_i^{(j)} = \\ell)}
+                    \\right]
+                }
+
+        """
+
         T = np.zeros((self.n_task, self.n_classes))
         for i in range(self.n_task):
             for j in range(self.n_classes):

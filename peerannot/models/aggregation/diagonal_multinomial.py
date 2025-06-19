@@ -104,11 +104,19 @@ class DiagonalMultinomial(DawidSkene):
         belongs to class :math:`k`, given current estimates of class marginals
         :math:`\\rho_k` and diagonal worker accuracies :math:`\\pi_{j,k}`:
 
+
         .. math::
 
-            T_{i,k} \\propto \\rho_k \\prod_{j=1}^{W}\\left[ \\pi_{j,k}^{\\mathbb{1}(y_i^{(j)} = k)} \\cdot \\left( \\frac{1 - \\pi_{j,k}}{K - 1} \\right)^{\\sum_{\\ell \\neq k} \\mathbb{1}(y_i^{(j)} = \\ell)} \\right]
+            T_{i,k} = \\frac{\\rho_k \\cdot   \\prod_{j=1}^{W}   \\left[ \\pi_{j,k}^{\\mathbb{1}(y_i^{(j)} = k)} \\cdot   \\left( \\frac{1 - \\pi_{j,k}}{K - 1} \\right)^{\\sum_{\\ell \\neq k} \\mathbb{1}(y_i^{(j)} = \\ell)} \\right]}   {\\sum_{k'=1}^{K}   \\rho_{k'} \\cdot   \\prod_{j=1}^{W}   \\left[ \\pi_{j,k'}^{\\mathbb{1}(y_i^{(j)} = k')} \\cdot   \\left( \\frac{1 - \\pi_{j,k'}}{K - 1} \\right)^{\\sum_{\\ell \\neq k'} \\mathbb{1}(y_i^{(j)} = \\ell)} \\right]}
 
-        Normalize over :math:`k \\in \\{0, ..., K-1\\}` to get :math:`T_{i,k}`.
+
+        where:
+
+        - :math:`\\rho_k` is the prior probability of class :math:`k`,
+        - :math:`\\pi_{j,k}` is the probability that worker :math:`j` correctly identifies class :math:`k`,
+        - :math:`y_i^{(j)}` is the label assigned to task :math:`i` by worker :math:`j`,
+        - :math:`W` is the number of workers,
+        - :math:`K` is the number of classes.
 
         """
 

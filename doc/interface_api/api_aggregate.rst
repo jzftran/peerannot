@@ -34,6 +34,7 @@ All aggregation-based strategies are available running:
     dawid_skene_retroactive.DawidSkeneRetroactive
     multinomial_binary.MultinomialBinary
     pooled_diagonal_multinomial.PooledDiagonalMultinomial
+    pooled_multinomial.PooledMultinomial
     diagonal_multinomial.DiagonalMultinomial
     diagonal_multinomial.VectorizedDiagonalMultinomial
     GLAD.GLAD
