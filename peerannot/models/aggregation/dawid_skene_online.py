@@ -54,7 +54,6 @@ class DawidSkeneOnline:
     @property
     def gamma(self) -> float:
         """Compute current step size"""
-        self.t += 1
         return self.gamma0 / (self.t) ** self.decay
 
     def _ensure_capacity(
@@ -86,6 +85,7 @@ class DawidSkeneOnline:
                 ),
             )
             self.T, _ = self._e_step(batch_matrix, self.pi, self.rho)
+
             return
 
         if new_n_classes > self.n_classes:
@@ -104,9 +104,6 @@ class DawidSkeneOnline:
                 self.pi,
                 (new_n_workers, new_n_classes, new_n_classes),
                 fill_value=0.0,
-                # fill_value=np.array(
-                #     [np.eye(new_n_classes) for _ in range(new_n_workers)],
-                # ),
             )
 
         # Expand T if number of tasks or classes increases
@@ -114,18 +111,13 @@ class DawidSkeneOnline:
             max(self.T.shape[0], new_n_task),
             max(self.T.shape[1], new_n_classes),
         )
+
         if new_shape != self.T.shape:
-            self.T = self._expand_array(
+            self.T = self._expand_T(
                 self.T,
                 new_shape,
-                fill_value=1.0 / new_n_classes,
             )
 
-        # If number of classes increased, scale the existing values
-        if new_n_classes > self.n_classes:
-            self.T[:, : self.n_classes] *= self.n_classes / new_n_classes
-
-        # Finalize updated dimensions
         self.n_classes = new_n_classes
         self.n_workers = new_n_workers
         self.n_task = new_n_task
@@ -206,6 +198,47 @@ class DawidSkeneOnline:
 
         return new_array
 
+    def _expand_T(
+        self,
+        old_array: np.ndarray,
+        new_shape: tuple[int, ...],
+    ) -> np.ndarray:
+        """
+        Specialized array expansion for task-class probability matrices (self.T).
+
+        New tasks get uniform probability over all classes.
+        Existing tasks get zeros in new class positions.
+        """
+        if old_array is None:
+            raise ValueError("old_array cannot be None")
+
+        new_array = np.zeros(new_shape)
+
+        if old_array.ndim == 0:
+            old_shape = (1,)
+            old_array = old_array.reshape(1)
+        else:
+            old_shape = old_array.shape
+
+        old_n_tasks = old_shape[0] if len(old_shape) > 0 else 0
+        old_n_classes = old_shape[1] if len(old_shape) > 1 else 0
+        new_n_tasks, new_n_classes = new_shape
+
+        if old_array.size > 0:
+            min_tasks = min(old_n_tasks, new_n_tasks)
+            min_classes = min(old_n_classes, new_n_classes)
+            new_array[:min_tasks, :min_classes] = old_array[
+                :min_tasks,
+                :min_classes,
+            ]
+
+        if new_n_tasks > old_n_tasks:
+            uniform_prob = 1.0 / new_n_classes
+            for task_idx in range(old_n_tasks, new_n_tasks):
+                new_array[task_idx, :] = uniform_prob
+
+        return new_array
+
     def _prepare_mapping(
         self,
         batch: AnswersDict,
@@ -231,6 +264,7 @@ class DawidSkeneOnline:
         for task_id, worker_class in batch.items():
             if task_id not in task_mapping:
                 task_mapping[task_id] = len(task_mapping)
+
             for worker_id, class_id in worker_class.items():
                 if worker_id not in worker_mapping:
                     worker_mapping[worker_id] = len(worker_mapping)
@@ -330,20 +364,27 @@ class DawidSkeneOnline:
         batch_T = np.where(tdim > 0, T / tdim, 0)
 
         for batch_task_idx in task_mapping:
-            if global_task_idx := self.task_mapping.get(batch_task_idx):
+            if (
+                global_task_idx := self.task_mapping.get(batch_task_idx)
+            ) is not None:
                 for batch_class_idx in class_mapping:
-                    if global_class_idx := self.class_mapping.get(
-                        batch_class_idx,
-                    ):
-                        batch_T[
-                            task_mapping[batch_task_idx],
-                            class_mapping[batch_class_idx],
-                        ] = self.T[
+                    if (
+                        global_class_idx := self.class_mapping.get(
+                            batch_class_idx,
+                        )
+                    ) is not None:
+                        batch_task_pos = task_mapping[batch_task_idx]
+                        batch_class_pos = class_mapping[batch_class_idx]
+
+                        batch_T[batch_task_pos, batch_class_pos] = (
+                            1 - self.gamma
+                        ) * batch_T[
+                            batch_task_pos,
+                            batch_class_pos,
+                        ] + self.gamma * self.T[
                             global_task_idx,
                             global_class_idx,
                         ]
-
-        batch_T /= batch_T.sum(axis=1, keepdims=True)
 
         return batch_T
 
@@ -357,7 +398,14 @@ class DawidSkeneOnline:
         """Get current most likely class for each task"""
         if self.T is None:
             raise NotInitialized(self.__class__.__name__)
-        return np.argmax(self.get_probas(), axis=1)
+
+        rev_class_mapping = {
+            local_class: global_class
+            for global_class, local_class in self.class_mapping.items()
+        }
+
+        map_back = np.vectorize(lambda x: rev_class_mapping[x])
+        return map_back(np.argmax(self.get_probas(), axis=1))
 
     def process_batch(
         self,
@@ -368,6 +416,8 @@ class DawidSkeneOnline:
         """Process a batch with per-batch EM until local convergence.
 
         Returns list of log-likelihoods."""
+
+        self.t += 1
 
         task_mapping: TaskMapping = {}
         worker_mapping: WorkerMapping = {}
@@ -429,27 +479,21 @@ class DawidSkeneOnline:
 
         # Online updates
         # TODO:@jzftran vectorization?
-        for task, batch_task_idx in task_mapping.items():
-            task_idx = self.task_mapping[task]
 
+        for task, batch_task_idx in task_mapping.items():
+            global_task_idx = self.task_mapping[task]
+            for class_idx in range(len(self.T[global_task_idx])):
+                self.T[global_task_idx][class_idx] *= 1 - self.gamma
             for class_name, batch_class_idx in class_mapping.items():
                 class_idx = self.class_mapping[class_name]
-                self.T[task_idx][class_idx] = (
-                    self.T[task_idx][class_idx] * (1 - self.gamma)
-                    + batch_T[batch_task_idx][batch_class_idx] * self.gamma
+                self.T[global_task_idx][class_idx] += (
+                    batch_T[batch_task_idx][batch_class_idx] * self.gamma
                 )
 
-            self.T[task_idx] /= self.T[task_idx].sum()
-
-        # Update only classes present in the batch
+        self.rho = self.rho * (1 - self.gamma)
         for class_name, batch_class_idx in class_mapping.items():
             class_idx = self.class_mapping[class_name]
-            self.rho[class_idx] = (
-                self.rho[class_idx] * (1 - self.gamma)
-                + batch_rho[batch_class_idx] * self.gamma
-            )
-            # renormalize
-        self.rho /= self.rho.sum()
+            self.rho[class_idx] += batch_rho[batch_class_idx] * self.gamma
 
         # Update only workers present in the batch
         for worker, batch_worker_idx in worker_mapping.items():
@@ -600,7 +644,6 @@ class DawidSkeneOnline:
         self._ensure_mapping(self.task_mapping, list(task_mapping))
         self._ensure_mapping(self.worker_mapping, list(worker_mapping))
         self._ensure_mapping(self.class_mapping, list(class_mapping))
-
         self._ensure_capacity(
             batch_matrix,
             task_mapping,
