@@ -42,6 +42,8 @@ class DawidSkeneRetroactive(DawidSkeneOnline):
 
         # Store the previous estimates of task true class distributions to detect changes
         # stores previous T
+        # doesn't have to be stored as full matrix, maybe store some kind of approx.
+        #
         self.prev_task_estimates: np.ndarray = np.array([[]])
 
     def _store_observations(
