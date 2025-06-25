@@ -23,6 +23,21 @@ type Mapping = dict[Hashable, int]
 type WorkerMapping = Mapping
 type TaskMapping = Mapping
 type ClassMapping = Mapping
+from __future__ import annotations
+
+from typing import (
+    TYPE_CHECKING,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Hashable, Iterable, MutableMapping
+
+    from peerannot.models.template import AnswersDict
+
+type Mapping = dict[Hashable, int]
+type WorkerMapping = Mapping
+type TaskMapping = Mapping
+type ClassMapping = Mapping
 
 
 class DawidSkeneOnline:
@@ -61,28 +76,42 @@ class DawidSkeneOnline:
         batch_matrix: np.ndarray,
     ) -> None:
         """Ensure internal parameters accommodate all workers, classes, and tasks in the batch."""
-
-        # Update n_classes, n_workers, n_task
         new_n_classes = len(self.class_mapping)
         new_n_workers = len(self.worker_mapping)
         new_n_task = len(self.task_mapping)
 
         if any(_ is None for _ in (self.rho, self.pi, self.T)):
-            self.n_classes = new_n_classes
-            self.n_workers = new_n_workers
-            self.n_task = new_n_task
-
-            self.T = (
-                np.ones((self.n_task, self.n_classes), dtype=float)
-                / self.n_classes
+            self._initialize_parameters(
+                new_n_classes, new_n_workers, new_n_task
             )
-
             self.rho, self.pi = self._m_step(
                 batch_matrix,
                 self.T,
             )
             return
 
+        self._expand_rho(new_n_classes)
+        self._expand_pi(new_n_workers, new_n_classes)
+        self._expand_T_matrix(new_n_task, new_n_classes)
+        self._update_dimensions(new_n_classes, new_n_workers, new_n_task)
+
+    def _initialize_parameters(
+        self, new_n_classes: int, new_n_workers: int, new_n_task: int
+    ) -> None:
+        """Initialize parameters if they are None."""
+        self.n_classes = new_n_classes
+        self.n_workers = new_n_workers
+        self.n_task = new_n_task
+
+        # Initialize T
+        self.T = np.ones((self.n_task, self.n_classes)) / self.n_classes
+
+        # Initialize rho and pi
+        self.rho = np.ones(self.n_classes) / self.n_classes
+        self.pi = np.zeros((new_n_workers, new_n_classes, new_n_classes))
+
+    def _expand_rho(self, new_n_classes: int) -> None:
+        """Expand the rho array if the number of classes increases."""
         if new_n_classes > self.n_classes:
             old_rho = self.rho
             self.rho = np.zeros(new_n_classes)
@@ -90,10 +119,10 @@ class DawidSkeneOnline:
             n_new = new_n_classes - self.n_classes
             if n_new > 0:
                 self.rho[self.n_classes :] = 1.0 / new_n_classes
-
             self.rho /= self.rho.sum()
 
-        # Expand pi
+    def _expand_pi(self, new_n_workers: int, new_n_classes: int) -> None:
+        """Expand the pi array if the number of workers or classes increases."""
         if new_n_workers > self.n_workers or new_n_classes > self.n_classes:
             self.pi = self._expand_array(
                 self.pi,
@@ -101,7 +130,8 @@ class DawidSkeneOnline:
                 fill_value=0.0,
             )
 
-        # Expand T if number of tasks or classes increases
+    def _expand_T_matrix(self, new_n_task: int, new_n_classes: int) -> None:
+        """Expand the T matrix if the number of tasks or classes increases."""
         new_shape = (
             max(self.T.shape[0], new_n_task),
             max(self.T.shape[1], new_n_classes),
@@ -113,6 +143,10 @@ class DawidSkeneOnline:
                 new_shape,
             )
 
+    def _update_dimensions(
+        self, new_n_classes: int, new_n_workers: int, new_n_task: int
+    ) -> None:
+        """Update the dimensions of the model."""
         self.n_classes = new_n_classes
         self.n_workers = new_n_workers
         self.n_task = new_n_task
