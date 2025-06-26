@@ -23,21 +23,6 @@ type Mapping = dict[Hashable, int]
 type WorkerMapping = Mapping
 type TaskMapping = Mapping
 type ClassMapping = Mapping
-from __future__ import annotations
-
-from typing import (
-    TYPE_CHECKING,
-)
-
-if TYPE_CHECKING:
-    from collections.abc import Hashable, Iterable, MutableMapping
-
-    from peerannot.models.template import AnswersDict
-
-type Mapping = dict[Hashable, int]
-type WorkerMapping = Mapping
-type TaskMapping = Mapping
-type ClassMapping = Mapping
 
 
 class DawidSkeneOnline:
@@ -82,7 +67,9 @@ class DawidSkeneOnline:
 
         if any(_ is None for _ in (self.rho, self.pi, self.T)):
             self._initialize_parameters(
-                new_n_classes, new_n_workers, new_n_task
+                new_n_classes,
+                new_n_workers,
+                new_n_task,
             )
             self.rho, self.pi = self._m_step(
                 batch_matrix,
@@ -96,7 +83,10 @@ class DawidSkeneOnline:
         self._update_dimensions(new_n_classes, new_n_workers, new_n_task)
 
     def _initialize_parameters(
-        self, new_n_classes: int, new_n_workers: int, new_n_task: int
+        self,
+        new_n_classes: int,
+        new_n_workers: int,
+        new_n_task: int,
     ) -> None:
         """Initialize parameters if they are None."""
         self.n_classes = new_n_classes
@@ -144,7 +134,10 @@ class DawidSkeneOnline:
             )
 
     def _update_dimensions(
-        self, new_n_classes: int, new_n_workers: int, new_n_task: int
+        self,
+        new_n_classes: int,
+        new_n_workers: int,
+        new_n_task: int,
     ) -> None:
         """Update the dimensions of the model."""
         self.n_classes = new_n_classes
@@ -489,23 +482,35 @@ class DawidSkeneOnline:
         # Online updates
         # TODO:@jzftran vectorization?
 
-        for task, batch_task_idx in task_mapping.items():
-            global_task_idx = self.task_mapping[task]
-            # Scale all entries in the row by (1 - gamma)
-            for class_idx in range(len(self.T[global_task_idx])):
-                self.T[global_task_idx, class_idx] *= 1 - self.gamma
-            # Add gamma times the batch estimates for classes in the batch
-            for class_name, batch_class_idx in class_mapping.items():
-                class_idx = self.class_mapping[class_name]
-                self.T[global_task_idx, class_idx] += (
-                    batch_T[batch_task_idx, batch_class_idx] * self.gamma
-                )
+        self._online_update(
+            task_mapping,
+            worker_mapping,
+            class_mapping,
+            batch_T,
+            batch_rho,
+            batch_pi,
+        )
 
-        self.rho = self.rho * (1 - self.gamma)
-        for class_name, batch_class_idx in class_mapping.items():
-            class_idx = self.class_mapping[class_name]
-            self.rho[class_idx] += batch_rho[batch_class_idx] * self.gamma
+        # online update
 
+        return ll
+
+    def _online_update(
+        self,
+        task_mapping,
+        worker_mapping,
+        class_mapping,
+        batch_T,
+        batch_rho,
+        batch_pi,
+    ):
+        self._online_update_T(task_mapping, class_mapping, batch_T)
+
+        self._online_update_rho(class_mapping, batch_rho)
+
+        self._online_update_pi(worker_mapping, class_mapping, batch_pi)
+
+    def _online_update_pi(self, worker_mapping, class_mapping, batch_pi):
         # Update only workers present in the batch
         for worker, batch_worker_idx in worker_mapping.items():
             worker_idx = self.worker_mapping[worker]
@@ -534,9 +539,24 @@ class DawidSkeneOnline:
                 if row_sum > 0:
                     self.pi[worker_idx, i_global, :] /= row_sum
 
-        # online update
+    def _online_update_rho(self, class_mapping, batch_rho):
+        self.rho = self.rho * (1 - self.gamma)
+        for class_name, batch_class_idx in class_mapping.items():
+            class_idx = self.class_mapping[class_name]
+            self.rho[class_idx] += batch_rho[batch_class_idx] * self.gamma
 
-        return ll
+    def _online_update_T(self, task_mapping, class_mapping, batch_T):
+        for task, batch_task_idx in task_mapping.items():
+            global_task_idx = self.task_mapping[task]
+            # Scale all entries in the row by (1 - gamma)
+            for class_idx in range(len(self.T[global_task_idx])):
+                self.T[global_task_idx, class_idx] *= 1 - self.gamma
+            # Add gamma times the batch estimates for classes in the batch
+            for class_name, batch_class_idx in class_mapping.items():
+                class_idx = self.class_mapping[class_name]
+                self.T[global_task_idx, class_idx] += (
+                    batch_T[batch_task_idx, batch_class_idx] * self.gamma
+                )
 
     def _e_step(
         self,
