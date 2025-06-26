@@ -17,12 +17,12 @@ from peerannot.models.aggregation.warnings_errors import (
 if TYPE_CHECKING:
     from collections.abc import Hashable, Iterable, MutableMapping
 
+    from peerannot.models.aggregation.types import (
+        ClassMapping,
+        TaskMapping,
+        WorkerMapping,
+    )
     from peerannot.models.template import AnswersDict
-
-type Mapping = dict[Hashable, int]
-type WorkerMapping = Mapping
-type TaskMapping = Mapping
-type ClassMapping = Mapping
 
 
 class DawidSkeneOnline:
