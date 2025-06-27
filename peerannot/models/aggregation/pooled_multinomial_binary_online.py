@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     )
 
 
-class PoooledMultinomialBinaryOnline(OnlineAlgorithm):
+class PooledMultinomialBinaryOnline(OnlineAlgorithm):
     @validate_call
     def __init__(
         self,

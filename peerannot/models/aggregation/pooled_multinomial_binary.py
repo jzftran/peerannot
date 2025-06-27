@@ -3,7 +3,7 @@ import numpy as np
 from peerannot.models import DawidSkene
 
 
-class PoooledMultinomialBinary(DawidSkene):
+class PooledMultinomialBinary(DawidSkene):
     """
     =========================
     Pooled Multinomial Binary
@@ -132,7 +132,7 @@ class PoooledMultinomialBinary(DawidSkene):
         self.T = np.where(self.denom_e_step > 0, T / self.denom_e_step, T)
 
 
-class VectorizedPoooledMultinomialBinary(PoooledMultinomialBinary):
+class VectorizedPooledMultinomialBinary(PooledMultinomialBinary):
     def _e_step(self):
         n_i = self.n_il.sum(axis=1, keepdims=True)
 
