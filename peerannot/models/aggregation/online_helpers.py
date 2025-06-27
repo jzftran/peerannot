@@ -220,12 +220,18 @@ class OnlineAlgorithm(ABC):
         self.n_workers = new_n_workers
         self.n_task = new_n_task
 
-        # Initialize T
+        self._initialize_T()
+        self._initialize_rho()
+        self._initialize_pi()
+
+    def _initialize_T(self) -> None:
         self.T = np.ones((self.n_task, self.n_classes)) / self.n_classes
 
-        # Initialize rho and pi
+    def _initialize_rho(self) -> None:
         self.rho = np.ones(self.n_classes) / self.n_classes
-        self.pi = np.zeros((new_n_workers, new_n_classes, new_n_classes))
+
+    def _initialize_pi(self) -> None:
+        self.pi = np.zeros((self.n_workers, self.n_classes, self.n_classes))
 
     def _expand_rho(self, new_n_classes: int) -> None:
         """Expand the rho array if the number of classes increases."""

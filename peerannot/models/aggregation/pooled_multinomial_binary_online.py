@@ -33,6 +33,9 @@ class PoooledMultinomialBinaryOnline(OnlineAlgorithm):
         # no need to expand_pi
         pass
 
+    def _initialize_pi(self) -> None:
+        self.pi = np.array(0.5)
+
     def _m_step(
         self,
         batch_matrix: np.ndarray,
