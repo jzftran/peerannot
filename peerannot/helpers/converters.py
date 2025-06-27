@@ -1,12 +1,11 @@
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
 
 # XXX TODO: clean this file and depend less on it
-
-# TODO@jzftran: Are answers always like this?
-AnswersDict = dict[str, dict[str, int]]
+if TYPE_CHECKING:
+    from peerannot.models.aggregation.types import AnswersDict
 
 
 class Converter:

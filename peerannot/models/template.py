@@ -4,18 +4,14 @@ Parent template to all strategies
 =================================
 """
 
-from collections.abc import Generator, Hashable
-from os import PathLike
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
 # XXX TODO: clean this file and depend less on it
-
 # TODO@jzftran: Are answers always like this?
-AnswersDict = dict[Hashable, dict[Hashable, int]]
-FilePathInput = PathLike | str | list[str] | Generator[str, None, None] | None
+from peerannot.models.aggregation.types import AnswersDict, FilePathInput
 
 
 class CrowdModel:
