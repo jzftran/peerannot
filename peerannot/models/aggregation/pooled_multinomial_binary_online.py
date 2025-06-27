@@ -9,7 +9,7 @@ import numpy as np
 from annotated_types import Ge, Gt
 from pydantic import validate_call
 
-from peerannot.models.aggregation.dawid_skene_online import DawidSkeneOnline
+from peerannot.models.aggregation.dawid_skene_online import OnlineAlgorithm
 
 if TYPE_CHECKING:
     from peerannot.models.aggregation.types import (
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     )
 
 
-class PoooledMultinomialBinaryOnline(DawidSkeneOnline):
+class PoooledMultinomialBinaryOnline(OnlineAlgorithm):
     @validate_call
     def __init__(
         self,

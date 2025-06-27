@@ -9,8 +9,9 @@ from numpy.typing import NDArray
 from pydantic import validate_call
 from tqdm.auto import tqdm
 
+from peerannot.models.aggregation.types import AnswersDict
 from peerannot.models.aggregation.warnings_errors import DidNotConverge
-from peerannot.models.template import AnswersDict, CrowdModel
+from peerannot.models.template import CrowdModel
 
 
 class DawidSkene(CrowdModel):
@@ -125,6 +126,7 @@ class DawidSkene(CrowdModel):
         """
         rho = self.T.sum(0) / self.n_task
 
+        # TODO@jzftran put in some estimate
         pi = np.zeros((self.n_workers, self.n_classes, self.n_classes))
         for q in range(self.n_classes):
             pij = self.T[:, q] @ self.crowd_matrix.transpose((1, 0, 2))
