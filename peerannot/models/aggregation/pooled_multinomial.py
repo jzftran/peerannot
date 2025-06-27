@@ -51,7 +51,6 @@ class PooledMultinomial(DawidSkene):
 
         """
 
-        # TODO:@jzftran adapt docstring
         self.rho = self.T.sum(0) / self.n_task
 
         aggregated_votes = np.einsum(
