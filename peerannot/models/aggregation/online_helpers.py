@@ -35,7 +35,7 @@ type SliceLike = None | slice | int
 type Slices = SliceLike | tuple[SliceLike, ...]
 
 
-def batch_generator(
+def batch_generator_by_task(
     answers: AnswersDict,
     batch_size: Annotated[int, Gt(0)],
 ) -> Generator[AnswersDict, Any, None]:
@@ -66,7 +66,7 @@ def batch_generator(
     Example:
     --------
     >>> answers = {1: {'1': 10}, 2: {'2': 20}, 3: {'1': 30}}
-    >>> for batch in batch_generator(answers, 2):
+    >>> for batch in batch_generator_by_task(answers, 2):
     ...     print(batch)
     {1: {'1': 10}, 2: {'2': 20}}
     {3: {'1': 30}}
@@ -502,19 +502,22 @@ class OnlineAlgorithm(ABC):
         tdim = T.sum(1, keepdims=True)
         batch_T = np.where(tdim > 0, T / tdim, 0)
 
+        updated_batch_T = batch_T.copy()
+
         for g_task, batch_task_idx in task_mapping.items():
             for g_class, batch_class_idx in class_mapping.items():
                 global_task_pos = self.task_mapping[g_task]
                 global_class_pos = self.class_mapping[g_class]
 
                 task_classes = self.T[global_task_pos]
+
                 if not np.all(
                     np.isclose(
                         task_classes,
                         task_classes[0],
                     ),
                 ):  # check if not uniform
-                    batch_T[batch_task_idx, batch_class_idx] = (
+                    updated_batch_T[batch_task_idx, batch_class_idx] = (
                         1 - self.gamma
                     ) * batch_T[
                         batch_task_idx,
@@ -748,17 +751,23 @@ class OnlineAlgorithm(ABC):
         pass
 
 
+@validate_call
+def validate_recursion_limit(recursion_limit: Annotated[int, Ge(0)] = 5):
+    return recursion_limit
+
+
 class RetroactiveAlgorithm(OnlineAlgorithm):
-    @validate_call
     def __init__(
         self,
         recursion_limit: Annotated[int, Ge(0)] = 5,
         *args,
         **kwargs,
     ) -> None:
-        super().__init__(*args, **kwargs)
+        self.recursion_limit = validate_recursion_limit(recursion_limit)
 
         self.recursion_limit = recursion_limit
+        super().__init__(*args, **kwargs)
+
         # Store past observations as a list of tuples (task_id, worker_id, class_id)
         # Should this be stored as crowd_matrix?
         # TODO:@jzftran Explore options for storing this data in a file while
