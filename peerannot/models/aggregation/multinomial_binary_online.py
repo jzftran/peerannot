@@ -67,13 +67,13 @@ class MultinomialBinaryOnline(OnlineAlgorithm):
     def _e_step(
         self,
         batch_matrix: np.ndarray,
-        local_pi: np.ndarray,
-        local_rho: np.ndarray,
+        batch_pi: np.ndarray,
+        batch_rho: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         batch_n_tasks = batch_matrix.shape[0]
         batch_n_classes = batch_matrix.shape[2]
 
-        off_diag_alpha = (np.ones_like(local_pi) - local_pi) / (
+        off_diag_alpha = (np.ones_like(batch_pi) - batch_pi) / (
             batch_n_classes - 1
         )
         T = np.zeros((batch_n_tasks, batch_n_classes))
@@ -81,7 +81,7 @@ class MultinomialBinaryOnline(OnlineAlgorithm):
             for j in range(batch_n_classes):
                 diag_contrib = np.prod(
                     np.power(
-                        local_pi,
+                        batch_pi,
                         batch_matrix[i, :, j],
                     ),
                 )  # shape (n_workers,)
@@ -95,7 +95,7 @@ class MultinomialBinaryOnline(OnlineAlgorithm):
                 )
 
                 T[i, j] = (
-                    np.prod(diag_contrib * off_diag_contrib) * local_rho[j]
+                    np.prod(diag_contrib * off_diag_contrib) * batch_rho[j]
                 )
 
         batch_denom_e_step = T.sum(1, keepdims=True)

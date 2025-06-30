@@ -54,8 +54,8 @@ class PooledMultinomialOnline(OnlineAlgorithm):
     def _e_step(
         self,
         batch_matrix: np.ndarray,
-        local_pi: np.ndarray,
-        local_rho: np.ndarray,
+        batch_pi: np.ndarray,
+        batch_rho: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         batch_n_tasks = batch_matrix.shape[0]
         batch_n_classes = batch_matrix.shape[2]
@@ -68,11 +68,11 @@ class PooledMultinomialOnline(OnlineAlgorithm):
                 num = (
                     np.prod(
                         np.power(
-                            local_pi[j, :],
+                            batch_pi[j, :],
                             batch_matrix[i, :, :],
                         ),
                     )
-                    * local_rho[j]
+                    * batch_rho[j]
                 )
                 T[i, j] = num
 

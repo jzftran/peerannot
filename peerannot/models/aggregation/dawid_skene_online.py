@@ -9,8 +9,8 @@ class DawidSkeneOnline(OnlineAlgorithm):
     def _e_step(
         self,
         batch_matrix: np.ndarray,
-        local_pi: np.ndarray,
-        local_rho: np.ndarray,
+        batch_pi: np.ndarray,
+        batch_rho: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Perform the E-step of the expectation-maximization algorithm.
@@ -25,11 +25,11 @@ class DawidSkeneOnline(OnlineAlgorithm):
             A 2D array of shape (n_tasks, n_workers) where each entry indicates
             the presence (1) or absence (0) of a worker's assignment to a task.
 
-        local_pi : np.ndarray
+        batch_pi : np.ndarray
             A 3D array of shape (n_workers, n_classes, n_labels) representing
             the probability of each worker assigning a label to a class.
 
-        local_rho : np.ndarray
+        batch_rho : np.ndarray
             A 1D array of shape (n_classes) representing the prior
             probabilities of each class.
 
@@ -48,9 +48,9 @@ class DawidSkeneOnline(OnlineAlgorithm):
             for c in range(batch_matrix.shape[2]):
                 likelihood = (
                     np.prod(
-                        np.power(local_pi[:, c, :], batch_matrix[t, :, :]),
+                        np.power(batch_pi[:, c, :], batch_matrix[t, :, :]),
                     )
-                    * local_rho[c]
+                    * batch_rho[c]
                 )
                 batch_T[t, c] = likelihood
 

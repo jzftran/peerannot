@@ -84,15 +84,15 @@ class DiagonalMultinomialOnline(OnlineAlgorithm):
     def _e_step(
         self,
         batch_matrix: np.ndarray,
-        local_pi: np.ndarray,
-        local_rho: np.ndarray,
+        batch_pi: np.ndarray,
+        batch_rho: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         batch_n_tasks = batch_matrix.shape[0]
         batch_n_classes = batch_matrix.shape[2]
 
         T = np.zeros((batch_n_tasks, batch_n_classes))
 
-        batch_pi_non_diag_values = (np.ones_like(local_pi) - local_pi) / (
+        batch_pi_non_diag_values = (np.ones_like(batch_pi) - batch_pi) / (
             batch_n_classes - 1
         )
 
@@ -104,7 +104,7 @@ class DiagonalMultinomialOnline(OnlineAlgorithm):
                 # Vectorized computation for all workers simultaneously
                 # Diagonal contributions: pi[k,j]^worker_labels[k,j]
                 diag_contrib = np.power(
-                    local_pi[:, j],
+                    batch_pi[:, j],
                     worker_labels[:, j],
                 )  # shape (n_workers,)
 
@@ -128,7 +128,7 @@ class DiagonalMultinomialOnline(OnlineAlgorithm):
                 worker_probs = (
                     diag_contrib * off_diag_contrib
                 )  # shape (n_workers,)
-                T[i, j] = np.prod(worker_probs) * local_rho[j]
+                T[i, j] = np.prod(worker_probs) * batch_rho[j]
 
         batch_denom_e_step = T.sum(1, keepdims=True)
         batch_T = np.where(batch_denom_e_step > 0, T / batch_denom_e_step, T)

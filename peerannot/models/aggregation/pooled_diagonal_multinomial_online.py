@@ -68,13 +68,13 @@ class PooledDiagonalMultinomialOnline(OnlineAlgorithm):
     def _e_step(
         self,
         batch_matrix: np.ndarray,
-        local_pi: np.ndarray,
-        local_rho: np.ndarray,
+        batch_pi: np.ndarray,
+        batch_rho: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         batch_n_tasks = batch_matrix.shape[0]
         batch_n_classes = batch_matrix.shape[2]
 
-        batch_pi_non_diag_values = (np.ones_like(local_pi) - local_pi) / (
+        batch_pi_non_diag_values = (np.ones_like(batch_pi) - batch_pi) / (
             batch_n_tasks
         )
 
@@ -83,7 +83,7 @@ class PooledDiagonalMultinomialOnline(OnlineAlgorithm):
         for i in range(batch_n_tasks):
             for j in range(batch_n_classes):
                 worker_labels = batch_matrix[i]
-                diag_contrib = np.prod(np.power(local_pi, worker_labels))
+                diag_contrib = np.prod(np.power(batch_pi, worker_labels))
                 mask = np.ones(batch_n_classes, dtype=bool)
                 mask[j] = False
                 off_diag_contrib = np.prod(
@@ -93,7 +93,7 @@ class PooledDiagonalMultinomialOnline(OnlineAlgorithm):
                     ),
                 )
 
-                T[i, j] = diag_contrib * off_diag_contrib * local_rho[j]
+                T[i, j] = diag_contrib * off_diag_contrib * batch_rho[j]
 
         batch_denom_e_step = T.sum(1, keepdims=True)
         batch_T = np.where(batch_denom_e_step > 0, T / batch_denom_e_step, T)

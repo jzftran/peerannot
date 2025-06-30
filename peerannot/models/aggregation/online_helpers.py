@@ -535,8 +535,8 @@ class OnlineAlgorithm(ABC):
             raise NotInitialized(self.__class__.__name__)
 
         rev_class = {
-            local_class: global_class
-            for global_class, local_class in self.class_mapping.items()
+            batch_class: global_class
+            for global_class, batch_class in self.class_mapping.items()
         }
 
         map_back = np.vectorize(lambda x: rev_class[x])
@@ -734,8 +734,8 @@ class OnlineAlgorithm(ABC):
     def _e_step(
         self,
         batch_matrix: np.ndarray,
-        local_pi: np.ndarray,
-        local_rho: np.ndarray,
+        batch_pi: np.ndarray,
+        batch_rho: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         pass
 

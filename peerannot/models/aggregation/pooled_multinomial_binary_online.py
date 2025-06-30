@@ -62,8 +62,8 @@ class PooledMultinomialBinaryOnline(OnlineAlgorithm):
     def _e_step(
         self,
         batch_matrix: np.ndarray,
-        local_pi: np.ndarray,
-        local_rho: np.ndarray,
+        batch_pi: np.ndarray,
+        batch_rho: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         batch_n_tasks = batch_matrix.shape[0]
         batch_n_classes = batch_matrix.shape[2]
@@ -86,20 +86,20 @@ class PooledMultinomialBinaryOnline(OnlineAlgorithm):
                     i,
                     l,
                 ]  # numer of annotators of task i voting for label l
-                diag_contrib = np.power(local_pi, n_il)
+                diag_contrib = np.power(batch_pi, n_il)
 
                 denominator = batch_n_classes - 1
                 off_diag_contrib = np.power(
                     np.divide(
-                        1 - local_pi,
+                        1 - batch_pi,
                         denominator,
-                        out=np.zeros_like(local_pi),
+                        out=np.zeros_like(batch_pi),
                         where=(denominator != 0),
                     ),
                     n_i - n_il,
                 )
 
-                T[i, l] = diag_contrib * off_diag_contrib * local_rho[l]
+                T[i, l] = diag_contrib * off_diag_contrib * batch_rho[l]
 
         batch_denom_e_step = T.sum(axis=1, keepdims=True)
 
