@@ -35,8 +35,6 @@ class DiagonalMultinomialOnline(OnlineAlgorithm):
         class_mapping: ClassMapping,
         batch_pi: np.ndarray,
     ) -> None:
-        print(f"{self.pi=}")
-        print(f"{batch_pi=}")
         # For each class in the batch, map batch class idx to global class idx
         batch_to_global = {
             batch_class_idx: self.class_mapping[class_name]
