@@ -83,47 +83,6 @@ class MongoOnlineAlgorithm(ABC):
     def drop(self):
         self.client.drop_database("online_algorithm")
 
-    def _update_rho_in_mongodb(self, rho_array: np.ndarray) -> None:
-        doc = {
-            "_id": "rho",
-            "probs": rho_array.tolist(),
-            "n_classes": self.n_classes,
-        }
-        self.db.class_priors.replace_one({"_id": "rho"}, doc, upsert=True)
-
-    def _load_T_row(self, task_id: int) -> np.ndarray:
-        doc = self.db.task_class_probs.find_one({"_id": task_id})
-        if doc is None:
-            # Initialize with uniform probabilities if task not found
-            probs = np.ones(self.n_classes) / self.n_classes
-        else:
-            probs = np.array(doc["probs"])
-            doc_n_classes = doc.get("n_classes", 0)
-            if doc_n_classes < self.n_classes:
-                # Expand with uniform probabilities for new classes
-                new_probs = np.ones(self.n_classes) / self.n_classes
-                new_probs[:doc_n_classes] = probs
-                probs = new_probs
-        return probs
-
-    def _update_T_row_in_mongodb(
-        self,
-        task_id: int,
-        row_array: np.ndarray,
-        current_answer,
-    ) -> None:
-        doc = {
-            "_id": task_id,
-            "probs": row_array.tolist(),
-            "n_classes": self.n_classes,
-            "current_answer": current_answer,
-        }
-        self.db.task_class_probs.replace_one(
-            {"_id": task_id},
-            doc,
-            upsert=True,
-        )
-
     def _load_pi_for_worker(self, worker_id: int) -> np.ndarray:
         doc = self.db.worker_confusion_matrices.find_one({"_id": worker_id})
         n_classes = self.n_classes
@@ -170,15 +129,14 @@ class MongoOnlineAlgorithm(ABC):
     @property
     def T(self) -> np.ndarray:
         """Load the entire T matrix from MongoDB into a numpy array."""
-        T = np.zeros((self.n_task, self.n_classes))
-        for task_id in range(self.n_task):
-            T[task_id, :] = self._load_T_row(task_id)
-        return T
+        # TODO@jzftran
+        raise NotImplementedError
 
     @property
     def rho(self) -> np.ndarray:
         """Load the rho array from MongoDB into a numpy array."""
         # TODO@jzftran
+        raise NotImplementedError
 
     @property
     def pi(self) -> np.ndarray:
@@ -264,31 +222,30 @@ class MongoOnlineAlgorithm(ABC):
         tdim = T.sum(1, keepdims=True)
         batch_T = np.where(tdim > 0, T / tdim, 0)
 
-        updated_batch_T = batch_T.copy()
+        task_probs_cursor = self.db.task_class_probs.find(
+            {"_id": {"$in": list(task_mapping)}},
+            {"_id": 1, **{f"probs.{cls}": 1 for cls in class_mapping}},
+        )
 
-        for g_task, batch_task_idx in task_mapping.items():
-            for g_class, batch_class_idx in class_mapping.items():
-                global_task_pos = self.task_mapping.find_one({"_id": g_task})[
-                    "index"
-                ]
-                global_class_pos = self.class_mapping.find_one(
-                    {"_id": g_class},
-                )["index"]
+        for doc in task_probs_cursor:
+            task_name = doc["_id"]
+            if task_name not in task_mapping:
+                continue
 
-                task_classes = self._load_T_row(global_task_pos)
+            batch_task_idx = task_mapping[task_name]
+            probs = doc.get("probs", {})
 
-                if not np.all(
-                    np.isclose(
-                        task_classes,
-                        task_classes[0],
-                    ),
-                ):  # check if not uniform
-                    updated_batch_T[batch_task_idx, batch_class_idx] = (
-                        1 - self.gamma
-                    ) * batch_T[
-                        batch_task_idx,
-                        batch_class_idx,
-                    ] + self.gamma * task_classes[global_class_pos]
+            for class_name, prob in probs.items():
+                if class_name not in class_mapping:
+                    continue
+                batch_class_idx = class_mapping[class_name]
+
+                batch_T[batch_task_idx, batch_class_idx] = (
+                    1 - self.gamma
+                ) * batch_T[
+                    batch_task_idx,
+                    batch_class_idx,
+                ] + self.gamma * prob
 
         return batch_T
 
@@ -544,6 +501,42 @@ class MongoOnlineAlgorithm(ABC):
                                         },
                                     },
                                 },
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "$set": {
+                    "current_answer": {
+                        "$let": {
+                            "vars": {
+                                "probs_array": {"$objectToArray": "$probs"},
+                            },
+                            "in": {
+                                "$arrayElemAt": [
+                                    {
+                                        "$map": {
+                                            "input": {
+                                                "$filter": {
+                                                    "input": "$$probs_array",
+                                                    "as": "item",
+                                                    "cond": {
+                                                        "$eq": [
+                                                            "$$item.v",
+                                                            {
+                                                                "$max": "$$probs_array.v",
+                                                            },
+                                                        ],
+                                                    },
+                                                },
+                                            },
+                                            "as": "item",
+                                            "in": "$$item.k",
+                                        },
+                                    },
+                                    0,
+                                ],
                             },
                         },
                     },
