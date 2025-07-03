@@ -802,11 +802,22 @@ class RetroactiveAlgorithm(OnlineAlgorithm):
         _depth: int = 0,
     ) -> list[float]:
         """Process a batch and perform retroactive updates."""
+        if _depth > self.recursion_limit:
+            msg = f"Max recursion depth {self.recursion_limit} exceeded"
+            print(msg)  # or use warnings.warn(msg)
+            return []  # or return some default value
 
-        wrapped = limit_recursion(self.recursion_limit)(
-            self._process_batch,
-        )
-        return wrapped(batch, maxiter=maxiter, epsilon=epsilon, _depth=_depth)
+        # Store observations and update previous estimates
+        self._store_observations(batch)
+        self._update_prev_task_estimates()
+
+        # Process the batch
+        ll = super().process_batch(batch, maxiter, epsilon)
+
+        # Perform retroactive updates
+        self._perform_retroactive_updates(_depth=_depth + 1)
+
+        return ll
 
     def _process_batch(
         self,
@@ -826,9 +837,13 @@ class RetroactiveAlgorithm(OnlineAlgorithm):
         self._perform_retroactive_updates()
         return ll
 
-    def _perform_retroactive_updates(self) -> None:
-        """Perform retroactive updates on confusion matrices
-        based on updated task estimates."""
+    def _perform_retroactive_updates(self, _depth: int = 0) -> None:
+        """Perform retroactive updates on confusion matrices based on updated task estimates."""
+        if _depth > self.recursion_limit:
+            msg = f"Max recursion depth {self.recursion_limit} exceeded"
+            print(msg)  # or use warnings.warn(msg)
+            return
+
         if self.T is None or len(self.past_observations) == 0:
             return
 
@@ -845,7 +860,7 @@ class RetroactiveAlgorithm(OnlineAlgorithm):
         if not changed_tasks:
             return
 
-        # ollect all observations involving changed tasks
+        # collect all observations involving changed tasks
         retro_batch_observations = [
             obs for obs in self.past_observations if obs[0] in changed_tasks
         ]
@@ -860,4 +875,4 @@ class RetroactiveAlgorithm(OnlineAlgorithm):
             if task_id not in retro_batch:
                 retro_batch[task_id] = {}
             retro_batch[task_id][worker_id] = class_id
-        self.process_batch(retro_batch, maxiter=3)
+        self.process_batch(retro_batch, maxiter=3, _depth=_depth + 1)
