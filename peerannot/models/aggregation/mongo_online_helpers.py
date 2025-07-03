@@ -129,14 +129,51 @@ class MongoOnlineAlgorithm(ABC):
     @property
     def T(self) -> np.ndarray:
         """Load the entire T matrix from MongoDB into a numpy array."""
-        # TODO@jzftran
-        raise NotImplementedError
+        T = np.zeros((self.n_task, self.n_classes))
+
+        task_idx_map = {
+            doc["_id"]: doc["index"]
+            for doc in self.task_mapping.find({}, {"_id": 1, "index": 1})
+        }
+        class_idx_map = {
+            str(doc["_id"]): doc["index"]
+            for doc in self.class_mapping.find({}, {"_id": 1, "index": 1})
+        }
+
+        task_probs_cursor = self.db.task_class_probs.find(
+            {},
+            {"_id": 1, "probs": 1},
+        )
+
+        for task in task_probs_cursor:
+            task_idx = task_idx_map.get(task["_id"])
+            if task_idx is None:
+                continue
+
+            for cls_key, prob in task.get("probs", {}).items():
+                class_idx = class_idx_map.get(str(cls_key))
+                if class_idx is not None:
+                    T[task_idx, class_idx] = prob
+
+        return T
 
     @property
     def rho(self) -> np.ndarray:
         """Load the rho array from MongoDB into a numpy array."""
-        # TODO@jzftran
-        raise NotImplementedError
+        rho = np.zeros(self.n_classes)
+
+        class_idx_map = {
+            str(doc["_id"]): doc["index"]
+            for doc in self.class_mapping.find({}, {"_id": 1, "index": 1})
+        }
+
+        for doc in self.db.class_priors.find({}, {"_id": 1, "prob": 1}):
+            class_id = str(doc["_id"])
+            idx = class_idx_map.get(class_id)
+            if idx is not None:
+                rho[idx] = doc["prob"]
+
+        return rho
 
     @property
     def pi(self) -> np.ndarray:
