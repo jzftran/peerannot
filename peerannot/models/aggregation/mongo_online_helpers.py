@@ -28,8 +28,9 @@ if TYPE_CHECKING:
 class MongoOnlineAlgorithm(ABC):
     """Batch EM is the same as in OnlineAlgorithm.
     Global rho, pi and T are stored in MongoDB.
-    Online updates of rho, pi,and T reconstruct full rho, and T by rows and pi by user.
-    This could be done better by using sparse representations for"""
+    Online updates of  pi reconstruct full confusion matrix for each user.
+    This could be done better by using sparse representations for pi, or by the approach
+    used in class SparseMongoOnlineAlgorithm"""
 
     def __init__(
         self,
@@ -681,3 +682,127 @@ class MongoOnlineAlgorithm(ABC):
         batch_T: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         pass
+
+
+class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
+    def _online_update_pi(
+        self,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
+        batch_pi: np.ndarray,
+    ) -> None:
+        # Update only workers present in the batch
+        scale = 1 - self.gamma
+
+        updates = []
+
+        for worker, batch_worker_idx in worker_mapping.items():
+            # retrieve the current confusion matrix for the worker
+            doc = self.db.worker_confusion_matrices.find_one({"_id": worker})
+            current_confusion_matrix = {}
+            if doc and "confusion_matrix" in doc:
+                for entry in doc["confusion_matrix"]:
+                    key = (entry["from_class_id"], entry["to_class_id"])
+                    current_confusion_matrix[key] = entry["prob"]
+
+            # Iterate over batch classes to update
+            for i_class_name, i_batch_idx in class_mapping.items():
+                row_total = 0.0
+                row_entries = []
+                # collect all entries for the current row (i_class_name)
+                for j_class_name, j_batch_idx in class_mapping.items():
+                    key = (i_class_name, j_class_name)
+                    current_prob = current_confusion_matrix.get(key, 0)
+                    new_prob = (
+                        scale * current_prob
+                        + self.gamma
+                        * batch_pi[batch_worker_idx, i_batch_idx, j_batch_idx]
+                    )
+
+                    if new_prob != 0:
+                        row_total += new_prob
+                        row_entries.append(
+                            (i_class_name, j_class_name, new_prob),
+                        )
+
+                # normalize the row if it has entries
+                if row_entries:
+                    for i_class_name, j_class_name, new_prob in row_entries:
+                        normalized_prob = new_prob / row_total
+                        existing_entry = None
+                        if doc and "confusion_matrix" in doc:
+                            for entry in doc["confusion_matrix"]:
+                                if (
+                                    entry["from_class_id"] == i_class_name
+                                    and entry["to_class_id"] == j_class_name
+                                ):
+                                    existing_entry = entry
+                                    break
+
+                        if existing_entry:
+                            # update existing entry with normalized probability
+                            updates.append(
+                                UpdateOne(
+                                    {
+                                        "_id": worker,
+                                        "confusion_matrix": {
+                                            "$elemMatch": {
+                                                "from_class_id": i_class_name,
+                                                "to_class_id": j_class_name,
+                                            },
+                                        },
+                                    },
+                                    {
+                                        "$set": {
+                                            "confusion_matrix.$.prob": normalized_prob,
+                                        },
+                                    },
+                                ),
+                            )
+                        else:
+                            # Add new entry with normalized probability
+                            updates.append(
+                                UpdateOne(
+                                    {"_id": worker},
+                                    {
+                                        "$push": {
+                                            "confusion_matrix": {
+                                                "from_class_id": i_class_name,
+                                                "to_class_id": j_class_name,
+                                                "prob": normalized_prob,
+                                            },
+                                        },
+                                    },
+                                    upsert=True,
+                                ),
+                            )
+
+                # handle zero entries for the current row
+                for j_class_name, j_batch_idx in class_mapping.items():
+                    key = (i_class_name, j_class_name)
+                    current_prob = current_confusion_matrix.get(key, 0)
+                    new_prob = (
+                        scale * current_prob
+                        + self.gamma
+                        * batch_pi[batch_worker_idx, i_batch_idx, j_batch_idx]
+                    )
+
+                    if new_prob == 0 and key in current_confusion_matrix:
+                        # if the new probability is zero and the entry exists, remove it
+                        updates.append(
+                            UpdateOne(
+                                {"_id": worker},
+                                {
+                                    "$pull": {
+                                        "confusion_matrix": {
+                                            "from_class_id": i_class_name,
+                                            "to_class_id": j_class_name,
+                                        },
+                                    },
+                                },
+                            ),
+                        )
+
+            # Apply updates in bulk
+        if updates:
+            self.db.worker_confusion_matrices.bulk_write(updates)
