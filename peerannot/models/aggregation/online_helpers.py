@@ -206,7 +206,7 @@ class OnlineAlgorithm(ABC):
 
         self._expand_rho(new_n_classes)
         self._expand_pi(new_n_workers, new_n_classes)
-        self._expand_T_matrix(new_n_task, new_n_classes)
+        self._expand_T(new_n_task, new_n_classes)
         self._update_dimensions(new_n_classes, new_n_workers, new_n_task)
 
     def _initialize_parameters(
@@ -253,17 +253,21 @@ class OnlineAlgorithm(ABC):
                 fill_value=0.0,
             )
 
-    def _expand_T_matrix(self, new_n_task: int, new_n_classes: int) -> None:
+    def _expand_T(
+        self,
+        new_n_task: int,
+        new_n_classes: int,
+    ) -> None:
         """Expand the T matrix if the number of tasks or classes increases."""
         new_shape = (
-            max(self.T.shape[0], new_n_task),
-            max(self.T.shape[1], new_n_classes),
+            max(self.T.shape[0] if self.T is not None else 0, new_n_task),
+            max(self.T.shape[1] if self.T is not None else 0, new_n_classes),
         )
-
-        if new_shape != self.T.shape:
-            self.T = self._expand_T(
-                self.T,
+        if new_shape != (self.T.shape if self.T is not None else (0, 0)):
+            self.T = self._expand_array(
+                self.T if self.T is not None else np.zeros((0, 0)),
                 new_shape,
+                fill_value=0.0,
             )
 
     def _update_dimensions(
@@ -352,36 +356,6 @@ class OnlineAlgorithm(ABC):
         new_array[new_slices] = old_array_reshaped[old_slices]
 
         return new_array
-
-    def _expand_T(
-        self,
-        old_array: np.ndarray,
-        new_shape: tuple[int, ...],
-    ) -> np.ndarray:
-        """
-        Specialized array expansion for task-class probability matrices (self.T).
-
-        New tasks get uniform probability over all classes.
-        Existing tasks get zeros in new class positions.
-        """
-
-        def fill_new_T(shape: tuple[int, ...]) -> np.ndarray:
-            n_tasks, n_classes = shape
-            new_T = np.zeros((n_tasks, n_classes))
-
-            if old_array is not None and old_array.size > 0:
-                old_n_tasks = old_array.shape[0]
-            else:
-                old_n_tasks = 0
-
-            if n_tasks > old_n_tasks and n_classes > 0:
-                uniform_prob = 1.0 / n_classes
-                for task_idx in range(old_n_tasks, n_tasks):
-                    new_T[task_idx, :] = uniform_prob
-
-            return new_T
-
-        return self._expand_array(old_array, new_shape, fill_new_T)
 
     def _prepare_mapping(
         self,
@@ -696,17 +670,23 @@ class OnlineAlgorithm(ABC):
         class_mapping: ClassMapping,
         batch_T: np.ndarray,
     ) -> None:
-        for task, batch_task_idx in task_mapping.items():
-            global_task_idx = self.task_mapping[task]
-            # Scale all entries in the row by (1 - gamma)
-            for class_idx in range(len(self.T[global_task_idx])):
-                self.T[global_task_idx, class_idx] *= 1 - self.gamma
-            # Add gamma times the batch estimates for classes in the batch
+        scale = 1 - self.gamma
+        for task_name, batch_task_idx in task_mapping.items():
+            global_task_idx = self.task_mapping[task_name]
             for class_name, batch_class_idx in class_mapping.items():
                 class_idx = self.class_mapping[class_name]
-                self.T[global_task_idx, class_idx] += (
-                    batch_T[batch_task_idx, batch_class_idx] * self.gamma
+                delta = batch_T[batch_task_idx, batch_class_idx] * self.gamma
+                self.T[global_task_idx, class_idx] = (
+                    self.T[global_task_idx, class_idx] * scale + delta
                 )
+        self._normalize_probs(list(task_mapping.keys()))
+
+    def _normalize_probs(self, updated_task_ids: list[str]) -> None:
+        for task_id in updated_task_ids:
+            global_task_idx = self.task_mapping[task_id]
+            row_sum = self.T[global_task_idx, :].sum()
+            if row_sum > 0:
+                self.T[global_task_idx, :] /= row_sum
 
     def process_batch_matrix(
         self,
