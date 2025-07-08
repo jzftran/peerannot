@@ -1,6 +1,22 @@
 import numpy as np
 
-from peerannot.models.aggregation.dawid_skene_online import DawidSkeneMongo
+from peerannot.models.aggregation.dawid_skene_online import (
+    DawidSkeneMongo,
+    DawidSkeneOnline,
+)
+
+batch1 = {
+    0: {0: 0},
+    1: {1: 1},
+    2: {2: 0},
+}
+
+batch2 = {
+    0: {3: 1, 4: 1},
+    3: {2: 1, 4: 0},
+    4: {2: 1, 4: 2},
+}
+
 
 expected_confusion_matrices = [
     {
@@ -42,6 +58,16 @@ expected_confusion_matrices = [
     },
 ]
 
+expected_T = np.array(
+    [
+        [0.34024604, 0.65975396, 0.0],
+        [0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.5, 0.5, 0.0],
+        [0.0, 0.5, 0.5],
+    ],
+)
+
 
 def sort_conf_matrix(matrix):
     """Sorts matrix entries to allow consistent comparison"""
@@ -50,18 +76,6 @@ def sort_conf_matrix(matrix):
 
 def test_dawid_skene_confusion_matrices():
     dsm = DawidSkeneMongo()
-
-    batch1 = {
-        0: {0: 0},
-        1: {1: 1},
-        2: {2: 0},
-    }
-
-    batch2 = {
-        0: {3: 1, 4: 1},
-        3: {2: 1, 4: 0},
-        4: {2: 1, 4: 2},
-    }
 
     try:
         dsm.process_batch(batch1)
@@ -96,3 +110,11 @@ def test_dawid_skene_confusion_matrices():
 
     finally:
         dsm.drop()
+
+
+def test_dawid_skene_online_process_batch():
+    dso = DawidSkeneOnline()
+    dso.process_batch(batch1)
+    dso.process_batch(batch2)
+
+    np.testing.assert_allclose(dso.T, expected_T, rtol=1e-6, atol=1e-8)
