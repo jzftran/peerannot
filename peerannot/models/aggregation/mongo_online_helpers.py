@@ -606,10 +606,9 @@ class MongoOnlineAlgorithm(ABC):
         )
 
         ops = []
-        gamma = self.gamma
 
         for class_name, batch_class_idx in class_mapping.items():
-            delta = batch_rho[batch_class_idx] * gamma
+            delta = batch_rho[batch_class_idx] * self.gamma
 
             ops.append(
                 UpdateOne(
@@ -635,7 +634,6 @@ class MongoOnlineAlgorithm(ABC):
 
             # Load the worker's confusion matrix from MongoDB
             confusion_matrix = self._load_pi_for_worker(worker_idx)
-
             # For each class in the batch, map batch class idx to global class idx
             batch_to_global = {
                 batch_class_idx: self.class_mapping.find_one(
@@ -643,7 +641,6 @@ class MongoOnlineAlgorithm(ABC):
                 )["index"]
                 for class_name, batch_class_idx in class_mapping.items()
             }
-
             # Perform updates in memory
             for i_batch, i_global in batch_to_global.items():
                 for j_batch, j_global in batch_to_global.items():
@@ -657,12 +654,9 @@ class MongoOnlineAlgorithm(ABC):
                         i_batch,
                         j_batch,
                     ]
-
-                    # Normalize the row
-                    row_sum = confusion_matrix[i_global, :].sum()
-                    if row_sum > 0:
-                        confusion_matrix[i_global, :] /= row_sum
-
+                row_sum = confusion_matrix[i_global, :].sum()
+                if row_sum > 0:
+                    confusion_matrix[i_global, :] /= row_sum
             # Save the updated confusion matrix back to MongoDB
             self._update_pi_for_worker_in_mongodb(worker_idx, confusion_matrix)
 
@@ -685,124 +679,197 @@ class MongoOnlineAlgorithm(ABC):
 
 
 class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
-    def _online_update_pi(
+    def __init__(
         self,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
-        batch_pi: np.ndarray,
-    ) -> None:
-        # Update only workers present in the batch
-        scale = 1 - self.gamma
+        gamma0=1,
+        decay=0.6,
+        mongo_uri="mongodb://localhost:27017/",
+        mongo_db_name="online_algorithm",
+    ):
+        super().__init__(gamma0, decay, mongo_uri, mongo_db_name)
 
-        updates = []
+    # def _online_update_pi(
+    #     self,
+    #     worker_mapping,
+    #     class_mapping,
+    #     batch_pi,
+    # ):
+    #     ops = []
+    #     for worker_id, batch_widx in worker_mapping.items():
+    #         # build the "delta" array for this worker
+    #         delta = []
+    #         for i_cls_name, i_batch in class_mapping.items():
+    #             for j_cls_name, j_batch in class_mapping.items():
+    #                 p = batch_pi[batch_widx][i_batch][j_batch]
+    #                 delta.append(
+    #                     {
+    #                         "from_class_id": i_cls_name,
+    #                         "to_class_id": j_cls_name,
+    #                         "batch_prob": p,
+    #                     },
+    #                 )
 
-        for worker, batch_worker_idx in worker_mapping.items():
-            # retrieve the current confusion matrix for the worker
-            doc = self.db.worker_confusion_matrices.find_one({"_id": worker})
-            current_confusion_matrix = {}
-            if doc and "confusion_matrix" in doc:
-                for entry in doc["confusion_matrix"]:
-                    key = (entry["from_class_id"], entry["to_class_id"])
-                    current_confusion_matrix[key] = entry["prob"]
+    #         # push a single updateOne with an aggregation‐pipeline
+    #         ops.append(
+    #             UpdateOne(
+    #                 {"_id": worker_id},
+    #                 [
+    #                     # 1) merge old/conf entries and apply weighted avg
+    #                     {
+    #                         "$set": {
+    #                             "confusion_matrix": {
+    #                                 "$map": {
+    #                                     "input": {
+    #                                         "$setUnion": [
+    #                                             "$confusion_matrix",
+    #                                             # wrap delta so we can $union it
+    #                                             {
+    #                                                 "$map": {
+    #                                                     "input": delta,
+    #                                                     "as": "d",
+    #                                                     "in": {
+    #                                                         "from_class_id": "$$d.from_class_id",
+    #                                                         "to_class_id": "$$d.to_class_id",
+    #                                                         "prob": "$$d.batch_prob",
+    #                                                     },
+    #                                                 },
+    #                                             },
+    #                                         ],
+    #                                     },
+    #                                     "as": "entry",
+    #                                     "in": {
+    #                                         "from_class_id": "$$entry.from_class_id",
+    #                                         "to_class_id": "$$entry.to_class_id",
+    #                                         "prob": {
+    #                                             # (1-γ)*old_prob + γ*batch_prob
+    #                                             "$add": [
+    #                                                 {
+    #                                                     "$multiply": [
+    #                                                         1 - self.gamma,
+    #                                                         {
+    #                                                             # find old prob (or 0 if not present)
+    #                                                             "$ifNull": [
+    #                                                                 {
+    #                                                                     "$first": {
+    #                                                                         "$map": {
+    #                                                                             "input": {
+    #                                                                                 "$filter": {
+    #                                                                                     "input": "$confusion_matrix",
+    #                                                                                     "cond": {
+    #                                                                                         "$and": [
+    #                                                                                             {
+    #                                                                                                 "$eq": [
+    #                                                                                                     "$$this.from_class_id",
+    #                                                                                                     "$$entry.from_class_id",
+    #                                                                                                 ],
+    #                                                                                             },
+    #                                                                                             {
+    #                                                                                                 "$eq": [
+    #                                                                                                     "$$this.to_class_id",
+    #                                                                                                     "$$entry.to_class_id",
+    #                                                                                                 ],
+    #                                                                                             },
+    #                                                                                         ],
+    #                                                                                     },
+    #                                                                                 },
+    #                                                                             },
+    #                                                                             "as": "f",
+    #                                                                             "in": "$$f.prob",
+    #                                                                         },
+    #                                                                     },
+    #                                                                 },
+    #                                                                 0.0,
+    #                                                             ],
+    #                                                         },
+    #                                                     ],
+    #                                                 },
+    #                                                 {
+    #                                                     "$multiply": [
+    #                                                         self.gamma,
+    #                                                         "$$entry.prob",
+    #                                                     ],
+    #                                                 },
+    #                                             ],
+    #                                         },
+    #                                     },
+    #                                 },
+    #                             },
+    #                         },
+    #                     },
+    #                     # 2) renormalize each `from_class_id` row so sum of probs == 1
+    #                     {
+    #                         "$set": {
+    #                             "confusion_matrix": {
+    #                                 "$let": {
+    #                                     "vars": {
+    #                                         "grouped": {
+    #                                             "$group": {
+    #                                                 "input": "$confusion_matrix",
+    #                                                 "by": "$$this.from_class_id",
+    #                                                 "accumulator": {
+    #                                                     "rows": {
+    #                                                         "$push": "$$this",
+    #                                                     },
+    #                                                     "sumProb": {
+    #                                                         "$sum": "$$this.prob",
+    #                                                     },
+    #                                                 },
+    #                                             },
+    #                                         },
+    #                                     },
+    #                                     "in": {
+    #                                         "$reduce": {
+    #                                             "input": {
+    #                                                 "$objectToArray": "$$grouped",
+    #                                             },
+    #                                             "initialValue": [],
+    #                                             "in": {
+    #                                                 "$concatArrays": [
+    #                                                     "$$value",
+    #                                                     {
+    #                                                         "$map": {
+    #                                                             "input": "$$this.v.rows",
+    #                                                             "as": "e",
+    #                                                             "in": {
+    #                                                                 "from_class_id": "$$e.from_class_id",
+    #                                                                 "to_class_id": "$$e.to_class_id",
+    #                                                                 "prob": {
+    #                                                                     "$cond": [
+    #                                                                         {
+    #                                                                             "$gt": [
+    #                                                                                 "$$this.v.sumProb",
+    #                                                                                 0,
+    #                                                                             ],
+    #                                                                         },
+    #                                                                         {
+    #                                                                             "$divide": [
+    #                                                                                 "$$e.prob",
+    #                                                                                 "$$this.v.sumProb",
+    #                                                                             ],
+    #                                                                         },
+    #                                                                         0,
+    #                                                                     ],
+    #                                                                 },
+    #                                                             },
+    #                                                         },
+    #                                                     },
+    #                                                 ],
+    #                                             },
+    #                                         },
+    #                                     },
+    #                                 },
+    #                             },
+    #                         },
+    #                     },
+    #                 ],
+    #             ),
+    #         )
 
-            # Iterate over batch classes to update
-            for i_class_name, i_batch_idx in class_mapping.items():
-                row_total = 0.0
-                row_entries = []
-                # collect all entries for the current row (i_class_name)
-                for j_class_name, j_batch_idx in class_mapping.items():
-                    key = (i_class_name, j_class_name)
-                    current_prob = current_confusion_matrix.get(key, 0)
-                    new_prob = (
-                        scale * current_prob
-                        + self.gamma
-                        * batch_pi[batch_worker_idx, i_batch_idx, j_batch_idx]
-                    )
-
-                    if new_prob != 0:
-                        row_total += new_prob
-                        row_entries.append(
-                            (i_class_name, j_class_name, new_prob),
-                        )
-
-                # normalize the row if it has entries
-                if row_entries:
-                    for i_class_name, j_class_name, new_prob in row_entries:
-                        normalized_prob = new_prob / row_total
-                        existing_entry = None
-                        if doc and "confusion_matrix" in doc:
-                            for entry in doc["confusion_matrix"]:
-                                if (
-                                    entry["from_class_id"] == i_class_name
-                                    and entry["to_class_id"] == j_class_name
-                                ):
-                                    existing_entry = entry
-                                    break
-
-                        if existing_entry:
-                            # update existing entry with normalized probability
-                            updates.append(
-                                UpdateOne(
-                                    {
-                                        "_id": worker,
-                                        "confusion_matrix": {
-                                            "$elemMatch": {
-                                                "from_class_id": i_class_name,
-                                                "to_class_id": j_class_name,
-                                            },
-                                        },
-                                    },
-                                    {
-                                        "$set": {
-                                            "confusion_matrix.$.prob": normalized_prob,
-                                        },
-                                    },
-                                ),
-                            )
-                        else:
-                            # Add new entry with normalized probability
-                            updates.append(
-                                UpdateOne(
-                                    {"_id": worker},
-                                    {
-                                        "$push": {
-                                            "confusion_matrix": {
-                                                "from_class_id": i_class_name,
-                                                "to_class_id": j_class_name,
-                                                "prob": normalized_prob,
-                                            },
-                                        },
-                                    },
-                                    upsert=True,
-                                ),
-                            )
-
-                # handle zero entries for the current row
-                for j_class_name, j_batch_idx in class_mapping.items():
-                    key = (i_class_name, j_class_name)
-                    current_prob = current_confusion_matrix.get(key, 0)
-                    new_prob = (
-                        scale * current_prob
-                        + self.gamma
-                        * batch_pi[batch_worker_idx, i_batch_idx, j_batch_idx]
-                    )
-
-                    if new_prob == 0 and key in current_confusion_matrix:
-                        # if the new probability is zero and the entry exists, remove it
-                        updates.append(
-                            UpdateOne(
-                                {"_id": worker},
-                                {
-                                    "$pull": {
-                                        "confusion_matrix": {
-                                            "from_class_id": i_class_name,
-                                            "to_class_id": j_class_name,
-                                        },
-                                    },
-                                },
-                            ),
-                        )
-
-            # Apply updates in bulk
-        if updates:
-            self.db.worker_confusion_matrices.bulk_write(updates)
+    #     if ops:
+    #         result = self.db.worker_confusion_matrices.bulk_write(
+    #             ops,
+    #             ordered=False,
+    #         )
+    #         print(
+    #             f"Matched {result.matched_count}, Modified {result.modified_count}",
+    #         )
