@@ -54,7 +54,7 @@ def batch_generator_by_task(
         strings or integers and values as integers).
 
     batch_size : int
-        The number of items to include in each batch. Must be a positive
+        The number of tasks to include in each batch. Must be a positive
         integer.
 
     Yields:
@@ -65,11 +65,11 @@ def batch_generator_by_task(
 
     Example:
     --------
-    >>> answers = {1: {'1': 10}, 2: {'2': 20}, 3: {'1': 30}}
+    >>> answers = {"obs1": {"u1": 10}, "obs2": {"u2": 20}, "obs3": {'u1': 30}}
     >>> for batch in batch_generator_by_task(answers, 2):
     ...     print(batch)
-    {1: {'1': 10}, 2: {'2': 20}}
-    {3: {'1': 30}}
+    {'obs1': {'u1': 10}, 'obs2': {'u2': 20}}
+    {'obs3': {'u1': 30}}
     """
 
     tasks = list(answers.items())
@@ -81,6 +81,34 @@ def batch_generator_by_user(
     answers: AnswersDict,
     batch_size: Annotated[int, Gt(0)],
 ) -> Generator[AnswersDict, Any, None]:
+    """Generate batches of answers where each batch contains up to
+    a specified number of users.
+
+    Parameters:
+    ----------
+    answers : AnswersDict
+        A dictionary where keys are identifiers (strings or integers) and
+        values are dictionaries containing answer data (with keys as
+        strings or integers and values as integers).
+
+    batch_size : int
+        The maximum number of users allowed per batch. Must be a positive
+        integer.
+
+    Yields:
+    -------
+    AnswersDict
+        A dictionary representing a batch of answers, where each key is an
+        identifier and each value is a dictionary of answer data.
+
+    Example:
+    --------
+    >>> answers = {"obs1": {"u1": 10}, "obs2": {"u2": 20}, "obs3": {"u1": 30}}
+    >>> for batch in batch_generator_by_user(answers, 1):
+    ...     print(batch)
+    {'obs2': {'u2': 20}}
+    {'obs1': {'u1': 10}, 'obs3': {'u1': 30}}
+    """
     all_users = {user_id for obs in answers.values() for user_id in obs}
 
     for user_batch in batched(all_users, batch_size):
@@ -95,6 +123,70 @@ def batch_generator_by_user(
         yield {
             obs_id: votes for obs_id, votes in batch_answers.items() if votes
         }
+
+
+def batch_generator_by_vote(
+    answers: AnswersDict,
+    batch_size: Annotated[int, Gt(0)],
+) -> Generator[AnswersDict, Any, None]:
+    """
+    Generate batches of answers where each batch contains up to a specified
+    number of total votes (i.e., user annotations).
+
+    Parameters:
+    ----------
+    answers : AnswersDict
+        A dictionary where keys are identifiers (strings or integers) and
+        values are dictionaries containing answer data (with keys as
+        strings or integers and values as integers).
+
+    batch_size : int
+        The maximum number of votes allowed per batch. Must be a positive
+        integer.
+
+    Yields:
+    -------
+    AnswersDict
+        A dictionary representing a batch of answers, where each key is an
+        identifier and each value is a dictionary of answer data.
+
+    Example:
+    --------
+    >>> answers = {"obs1": {"u1": 10}, "obs2": {"u2": 20}, "obs3": {"u1": 30}}
+    >>> for batch in batch_generator_by_vote(answers, 1):
+    ...     print(batch)
+    {'obs1': {'u1': 10}}
+    {'obs2': {'u2': 20}}
+    {'obs3': {'u1': 30}}
+    """
+    current_batch: AnswersDict = {}
+    current_count = 0
+
+    for obs_id, votes in answers.items():
+        vote_items = list(votes.items())
+        start = 0
+
+        while start < len(vote_items):
+            remaining_capacity = batch_size - current_count
+            end = start + remaining_capacity
+
+            batch_votes = dict(vote_items[start:end])
+
+            if obs_id in current_batch:
+                current_batch[obs_id].update(batch_votes)
+            else:
+                current_batch[obs_id] = batch_votes
+
+            current_count += len(batch_votes)
+            start = end
+
+            if current_count == batch_size:
+                yield current_batch
+                current_batch = {}
+                current_count = 0
+
+    if current_batch:
+        yield current_batch
 
 
 def slice_array(
@@ -380,14 +472,14 @@ class OnlineAlgorithm(ABC):
         """
 
         for task_id, worker_class in batch.items():
-            if task_id not in task_mapping:
-                task_mapping[task_id] = len(task_mapping)
+            if str(task_id) not in task_mapping:
+                task_mapping[str(task_id)] = len(task_mapping)
 
             for worker_id, class_id in worker_class.items():
-                if worker_id not in worker_mapping:
-                    worker_mapping[worker_id] = len(worker_mapping)
-                if class_id not in class_mapping:
-                    class_mapping[class_id] = len(class_mapping)
+                if str(worker_id) not in worker_mapping:
+                    worker_mapping[str(worker_id)] = len(worker_mapping)
+                if str(class_id) not in class_mapping:
+                    class_mapping[str(class_id)] = len(class_mapping)
 
     def _ensure_mapping(
         self,
@@ -460,9 +552,9 @@ class OnlineAlgorithm(ABC):
 
         for task_id, worker_class in batch.items():
             for worker_id, class_id in worker_class.items():
-                task_index = task_mapping[task_id]
-                user_index = worker_mapping[worker_id]
-                label_index = class_mapping[class_id]
+                task_index = task_mapping[str(task_id)]
+                user_index = worker_mapping[str(worker_id)]
+                label_index = class_mapping[str(class_id)]
                 batch_matrix[task_index, user_index, label_index] = True
         return batch_matrix
 
@@ -477,7 +569,8 @@ class OnlineAlgorithm(ABC):
         batch_T = np.where(tdim > 0, T / tdim, 0)
 
         updated_batch_T = batch_T.copy()
-
+        print(f"pre update {updated_batch_T=} ")
+        print(f"{self.T}")
         for g_task, batch_task_idx in task_mapping.items():
             for g_class, batch_class_idx in class_mapping.items():
                 global_task_pos = self.task_mapping[g_task]
@@ -497,8 +590,9 @@ class OnlineAlgorithm(ABC):
                         batch_task_idx,
                         batch_class_idx,
                     ] + self.gamma * task_classes[global_class_pos]
+        print(f"after update {updated_batch_T=} ")
 
-        return batch_T
+        return updated_batch_T
 
     def get_probas(self) -> np.ndarray:
         """Get current estimates of task-class probabilities"""
@@ -635,7 +729,6 @@ class OnlineAlgorithm(ABC):
                 batch_class_idx: self.class_mapping[class_name]
                 for class_name, batch_class_idx in class_mapping.items()
             }
-
             for i_batch, i_global in batch_to_global.items():
                 for j_batch, j_global in batch_to_global.items():
                     self.pi[worker_idx, i_global, j_global] = (
