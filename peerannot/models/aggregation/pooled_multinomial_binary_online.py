@@ -70,23 +70,17 @@ class PooledMultinomialBinaryOnline(OnlineAlgorithm):
 
         T = np.zeros((batch_n_tasks, batch_n_classes))
 
+        batch_n_il = np.sum(
+            batch_matrix,
+            axis=1,
+        )
         for i in range(batch_n_tasks):
-            batch_n_il = np.sum(
-                batch_matrix,
-                axis=1,
-            )
             batch_n_i = batch_n_il[
                 i
             ].sum()  # total numer of annotators of task i
 
-            n_i = batch_n_i
-
             for l in range(batch_n_classes):
-                n_il = batch_n_il[
-                    i,
-                    l,
-                ]  # numer of annotators of task i voting for label l
-                diag_contrib = np.power(batch_pi, n_il)
+                diag_contrib = np.power(batch_pi, batch_n_il[i, l])
 
                 denominator = batch_n_classes - 1
                 off_diag_contrib = np.power(
@@ -96,7 +90,7 @@ class PooledMultinomialBinaryOnline(OnlineAlgorithm):
                         out=np.zeros_like(batch_pi),
                         where=(denominator != 0),
                     ),
-                    n_i - n_il,
+                    batch_n_i - batch_n_il[i, l],
                 )
 
                 T[i, l] = diag_contrib * off_diag_contrib * batch_rho[l]
