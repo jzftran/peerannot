@@ -84,7 +84,7 @@ class MongoOnlineAlgorithm(ABC):
     def drop(self):
         self.client.drop_database("online_algorithm")
 
-    def _load_pi_for_worker(self, worker_id: int) -> np.ndarray:
+    def _load_pi_for_worker(self, worker_id: str) -> np.ndarray:
         doc = self.db.worker_confusion_matrices.find_one({"_id": worker_id})
         n_classes = self.n_classes
         confusion_matrix = np.zeros((n_classes, n_classes))
@@ -181,7 +181,7 @@ class MongoOnlineAlgorithm(ABC):
         """Load the entire pi array from MongoDB into a numpy array."""
         pi = np.zeros((self.n_workers, self.n_classes, self.n_classes))
         for worker_id in range(self.n_workers):
-            pi[worker_id, :, :] = self._load_pi_for_worker(worker_id)
+            pi[worker_id, :, :] = self._load_pi_for_worker(str(worker_id))
         return pi
 
     def get_or_create_indices(self, collection, keys: list[Hashable]) -> dict:

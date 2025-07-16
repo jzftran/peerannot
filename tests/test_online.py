@@ -20,19 +20,19 @@ batch2 = {
 
 expected_confusion_matrices = [
     {
-        "_id": 0,
+        "_id": "0",
         "confusion_matrix": [
             {"from_class_id": 0, "to_class_id": 0, "prob": 1.0},
         ],
     },
     {
-        "_id": 1,
+        "_id": "1",
         "confusion_matrix": [
             {"from_class_id": 1, "to_class_id": 1, "prob": 1.0},
         ],
     },
     {
-        "_id": 2,
+        "_id": "2",
         "confusion_matrix": [
             {"from_class_id": 0, "to_class_id": 0, "prob": 0.3402460446135528},
             {"from_class_id": 1, "to_class_id": 1, "prob": 1.0},
@@ -41,18 +41,20 @@ expected_confusion_matrices = [
         ],
     },
     {
-        "_id": 3,
+        "_id": "3",
         "confusion_matrix": [
             {"from_class_id": 1, "to_class_id": 1, "prob": 1.0},
+            {"from_class_id": 0, "to_class_id": 1, "prob": 1.0},
         ],
     },
     {
-        "_id": 4,
+        "_id": "4",
         "confusion_matrix": [
-            {"from_class_id": 1, "to_class_id": 1, "prob": 0.5},
-            {"from_class_id": 1, "to_class_id": 0, "prob": 0.25},
-            {"from_class_id": 1, "to_class_id": 2, "prob": 0.25},
-            {"from_class_id": 0, "to_class_id": 0, "prob": 1.0},
+            {"from_class_id": 1, "to_class_id": 1, "prob": 0.2538683445334543},
+            {"from_class_id": 1, "to_class_id": 0, "prob": 0.3730658277332728},
+            {"from_class_id": 1, "to_class_id": 2, "prob": 0.3730658277332728},
+            {"from_class_id": 0, "to_class_id": 1, "prob": 0.568874072230784},
+            {"from_class_id": 0, "to_class_id": 0, "prob": 0.431125927769216},
             {"from_class_id": 2, "to_class_id": 2, "prob": 1.0},
         ],
     },
@@ -60,7 +62,7 @@ expected_confusion_matrices = [
 
 expected_T = np.array(
     [
-        [0.34024604, 0.65975396, 0.0],
+        [0.77552133, 0.22447867, 0.0],
         [0.0, 1.0, 0.0],
         [1.0, 0.0, 0.0],
         [0.5, 0.5, 0.0],
@@ -76,7 +78,7 @@ def sort_conf_matrix(matrix):
 
 def test_dawid_skene_confusion_matrices():
     dsm = DawidSkeneMongo()
-
+    dsm.drop()
     try:
         dsm.process_batch(batch1)
         dsm.process_batch(batch2)
