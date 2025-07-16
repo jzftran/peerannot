@@ -688,27 +688,28 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         class_mapping: ClassMapping,
         batch_pi: np.ndarray,
     ) -> None:
+        class_docs = self.db.class_mapping.find(
+            {"_id": {"$in": list(class_mapping.keys())}},
+        )
+        batch_to_global = {
+            class_mapping[doc["_id"]]: doc["index"] for doc in class_docs
+        }
+
+        worker_confusions_cursor = self.db.worker_confusion_matrices.find(
+            {"_id": {"$in": list(worker_mapping.keys())}},
+        )
+        worker_confusions = {
+            doc["_id"]: doc.get("confusion_matrix", [])
+            for doc in worker_confusions_cursor
+        }
+        updates = []
         for worker, batch_worker_idx in worker_mapping.items():
-            # Fetch the current confusion matrix for the worker
-            worker_doc = self.db.worker_confusion_matrices.find_one(
-                {"_id": worker},
-            )
-            if worker_doc and "confusion_matrix" in worker_doc:
-                confusion_matrix = worker_doc["confusion_matrix"]
-            else:
-                confusion_matrix = []
+            confusion_matrix = worker_confusions.get(worker, [])
 
-            batch_to_global = {
-                batch_class_idx: self.class_mapping.find_one(
-                    {"_id": class_name},
-                )["index"]
-                for class_name, batch_class_idx in class_mapping.items()
+            entry_map = {
+                (entry["from_class_id"], entry["to_class_id"]): idx
+                for idx, entry in enumerate(confusion_matrix)
             }
-
-            entry_map = {}
-            for idx, entry in enumerate(confusion_matrix):
-                key = (entry["from_class_id"], entry["to_class_id"])
-                entry_map[key] = idx
 
             # Update the confusion matrix with new probabilities
             for i_batch, i_global in batch_to_global.items():
@@ -754,8 +755,14 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
                             entry["prob"] /= row_sum
 
             # Save the updated confusion matrix back to MongoDB
-            self.db.worker_confusion_matrices.update_one(
-                {"_id": worker},
-                {"$set": {"confusion_matrix": confusion_matrix}},
-                upsert=True,
+            updates.append(
+                UpdateOne(
+                    {"_id": worker},
+                    {"$set": {"confusion_matrix": confusion_matrix}},
+                    upsert=True,
+                ),
+            )
+        if updates:
+            self.db.worker_confusion_matrices.bulk_write(
+                updates, ordered=False
             )
