@@ -9,7 +9,9 @@ import numpy as np
 from annotated_types import Ge, Gt
 from pydantic import validate_call
 
-from peerannot.models.aggregation.dawid_skene_online import OnlineAlgorithm
+from peerannot.models.aggregation.online_helpers import (
+    OnlineAlgorithm,
+)
 
 if TYPE_CHECKING:
     from peerannot.models.aggregation.types import (
