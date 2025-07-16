@@ -569,8 +569,7 @@ class OnlineAlgorithm(ABC):
         batch_T = np.where(tdim > 0, T / tdim, 0)
 
         updated_batch_T = batch_T.copy()
-        print(f"pre update {updated_batch_T=} ")
-        print(f"{self.T}")
+
         for g_task, batch_task_idx in task_mapping.items():
             for g_class, batch_class_idx in class_mapping.items():
                 global_task_pos = self.task_mapping[g_task]
@@ -590,7 +589,6 @@ class OnlineAlgorithm(ABC):
                         batch_task_idx,
                         batch_class_idx,
                     ] + self.gamma * task_classes[global_class_pos]
-        print(f"after update {updated_batch_T=} ")
 
         return updated_batch_T
 
