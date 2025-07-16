@@ -27,9 +27,7 @@ if TYPE_CHECKING:
 
 class MongoOnlineAlgorithm(ABC):
     """Batch EM is the same as in OnlineAlgorithm.
-    Global rho, pi and T are stored in MongoDB.
-    Online updates of  pi reconstruct full confusion matrix for each user.
-    This could be done better by using sparse representations for pi, or by the approach
+    Global rho, pi and T are stored sparsly in MongoDB.
     used in class SparseMongoOnlineAlgorithm"""
 
     def __init__(
@@ -622,72 +620,6 @@ class MongoOnlineAlgorithm(ABC):
         class_mapping: ClassMapping,
         batch_pi: np.ndarray,
     ) -> None:
-        # Update only workers present in the batch
-        for worker, batch_worker_idx in worker_mapping.items():
-            worker_idx = self.worker_mapping.find_one({"_id": worker})["index"]
-
-            # Load the worker's confusion matrix from MongoDB
-            confusion_matrix = self._load_pi_for_worker(worker_idx)
-            # For each class in the batch, map batch class idx to global class idx
-            batch_to_global = {
-                batch_class_idx: self.class_mapping.find_one(
-                    {"_id": class_name},
-                )["index"]
-                for class_name, batch_class_idx in class_mapping.items()
-            }
-            # Perform updates in memory
-            for i_batch, i_global in batch_to_global.items():
-                for j_batch, j_global in batch_to_global.items():
-                    confusion_matrix[i_global, j_global] = (
-                        1 - self.gamma
-                    ) * confusion_matrix[
-                        i_global,
-                        j_global,
-                    ] + self.gamma * batch_pi[
-                        batch_worker_idx,
-                        i_batch,
-                        j_batch,
-                    ]
-                row_sum = confusion_matrix[i_global, :].sum()
-                if row_sum > 0:
-                    confusion_matrix[i_global, :] /= row_sum
-            # Save the updated confusion matrix back to MongoDB
-            self._update_pi_for_worker_in_mongodb(worker_idx, confusion_matrix)
-
-    @abstractmethod
-    def _e_step(
-        self,
-        batch_matrix: np.ndarray,
-        batch_pi: np.ndarray,
-        batch_rho: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        pass
-
-    @abstractmethod
-    def _m_step(
-        self,
-        batch_matrix: np.ndarray,
-        batch_T: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        pass
-
-
-class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
-    def __init__(
-        self,
-        gamma0=1,
-        decay=0.6,
-        mongo_uri="mongodb://localhost:27017/",
-        mongo_db_name="online_algorithm",
-    ):
-        super().__init__(gamma0, decay, mongo_uri, mongo_db_name)
-
-    def _online_update_pi(
-        self,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
-        batch_pi: np.ndarray,
-    ) -> None:
         class_docs = self.db.class_mapping.find(
             {"_id": {"$in": list(class_mapping.keys())}},
         )
@@ -764,5 +696,34 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
             )
         if updates:
             self.db.worker_confusion_matrices.bulk_write(
-                updates, ordered=False
+                updates,
+                ordered=False,
             )
+
+    @abstractmethod
+    def _e_step(
+        self,
+        batch_matrix: np.ndarray,
+        batch_pi: np.ndarray,
+        batch_rho: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        pass
+
+    @abstractmethod
+    def _m_step(
+        self,
+        batch_matrix: np.ndarray,
+        batch_T: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        pass
+
+
+class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
+    def __init__(
+        self,
+        gamma0=1,
+        decay=0.6,
+        mongo_uri="mongodb://localhost:27017/",
+        mongo_db_name="online_algorithm",
+    ):
+        super().__init__(gamma0, decay, mongo_uri, mongo_db_name)
