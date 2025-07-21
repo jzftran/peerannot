@@ -140,7 +140,9 @@ class PooledDiagonalMultinomial(DawidSkene):
         for i in range(self.n_task):
             for j in range(self.n_classes):
                 worker_labels = self.crowd_matrix[i]
-                diag_contrib = np.prod(np.power(self.pi, worker_labels))
+                diag_contrib = np.prod(
+                    np.power(self.pi[j], worker_labels[:, j]),
+                )
                 mask = np.ones(self.n_classes, dtype=bool)
                 mask[j] = False
                 off_diag_contrib = np.prod(

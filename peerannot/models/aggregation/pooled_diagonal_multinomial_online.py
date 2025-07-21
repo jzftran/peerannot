@@ -85,7 +85,9 @@ class PooledDiagonalMultinomialOnline(OnlineAlgorithm):
         for i in range(batch_n_tasks):
             for j in range(batch_n_classes):
                 worker_labels = batch_matrix[i]
-                diag_contrib = np.prod(np.power(batch_pi, worker_labels))
+                diag_contrib = np.prod(
+                    np.power(batch_pi[j], worker_labels[:, j]),
+                )
                 mask = np.ones(batch_n_classes, dtype=bool)
                 mask[j] = False
                 off_diag_contrib = np.prod(
