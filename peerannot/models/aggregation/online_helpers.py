@@ -849,7 +849,7 @@ class RetroactiveAlgorithm(OnlineAlgorithm):
         # stores previous T
         # doesn't have to be stored as full matrix, maybe store some kind of approx.
         #
-        self.prev_task_estimates: np.ndarray = np.array([[]])
+        self.prev_task_estimates = {}  # task_id: class_id
 
     def _store_observations(
         self,
@@ -861,9 +861,18 @@ class RetroactiveAlgorithm(OnlineAlgorithm):
                 self.past_observations.append((task_id, worker_id, class_id))
 
     def _update_prev_task_estimates(self) -> None:
-        """Update the previous task estimates before processing a new batch."""
-        if self.T is not None:
-            self.prev_task_estimates = self.T.copy()
+        """Get current most likely class for each task"""
+        if self.T is None:
+            return
+
+        rev_class = {
+            batch_class: global_class
+            for global_class, batch_class in self.class_mapping.items()
+        }
+        for task_id, task_idx in self.task_mapping.items():
+            self.prev_task_estimates[task_id] = rev_class[
+                np.argmax(self.T[task_idx])
+            ]
 
     def process_batch(
         self,
@@ -890,24 +899,6 @@ class RetroactiveAlgorithm(OnlineAlgorithm):
 
         return ll
 
-    def _process_batch(
-        self,
-        batch: AnswersDict,
-        maxiter: int = 50,
-        epsilon: float = 1e-6,
-        _depth: int = 0,
-    ) -> list[float]:
-        """Process a batch and perform retroactive updates."""
-
-        self._store_observations(batch)
-
-        self._update_prev_task_estimates()
-
-        ll = super().process_batch(batch, maxiter, epsilon)
-
-        self._perform_retroactive_updates()
-        return ll
-
     def _perform_retroactive_updates(self, _depth: int = 0) -> None:
         """Perform retroactive updates on confusion matrices based on updated task estimates."""
         if _depth > self.recursion_limit:
@@ -920,13 +911,18 @@ class RetroactiveAlgorithm(OnlineAlgorithm):
 
         # identify changed tasks
         changed_tasks = {}
+
+        rev_class = {
+            batch_class: global_class
+            for global_class, batch_class in self.class_mapping.items()
+        }
+
         for task_id, task_idx in self.task_mapping.items():
-            if task_id < len(self.prev_task_estimates):
-                prev_estimate = self.prev_task_estimates[task_id]
-                if prev_estimate.size > 0:
-                    current_estimate = self.T[task_idx]
-                    if np.argmax(prev_estimate) != np.argmax(current_estimate):
-                        changed_tasks[task_id] = task_idx
+            prev_estimate = self.prev_task_estimates.get(task_id, None)
+            if prev_estimate is not None:
+                current_estimate = rev_class[np.argmax(self.T[task_idx])]
+                if prev_estimate != current_estimate:
+                    changed_tasks[task_id] = task_idx
 
         if not changed_tasks:
             return
