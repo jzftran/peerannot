@@ -3,14 +3,14 @@ from __future__ import annotations
 import numpy as np
 
 from peerannot.models.aggregation.mongo_online_helpers import (
-    SparseMongoOnlineAlgorithm,
+    MongoOnlineAlgorithm,
 )
 from peerannot.models.aggregation.online_helpers import (
     OnlineAlgorithm,
 )
 
 
-class DawidSkeneMongo(SparseMongoOnlineAlgorithm):
+class DawidSkeneMongo(MongoOnlineAlgorithm):
     def _e_step(
         self,
         batch_matrix: np.ndarray,
