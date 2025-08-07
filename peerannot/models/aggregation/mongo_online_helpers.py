@@ -9,6 +9,7 @@ from typing import (
 import numpy as np
 import sparse as sp
 from annotated_types import Ge, Gt
+from line_profiler import profile
 from pymongo import MongoClient, UpdateOne
 
 from peerannot.models.aggregation.warnings_errors import (
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
     )
     from peerannot.models.template import AnswersDict
 
+from collections import defaultdict
+
 
 class MongoOnlineAlgorithm(ABC):
     """Batch EM is the same as in OnlineAlgorithm.
@@ -36,7 +39,7 @@ class MongoOnlineAlgorithm(ABC):
         gamma0: Annotated[float, Ge(0)] = 1.0,
         decay: Annotated[float, Gt(0)] = 0.6,
         mongo_uri: str = "mongodb://localhost:27017/",
-        mongo_db_name: str = "online_algorithm",
+        # mongo_db_name: str = "online_algorithm",
     ) -> None:
         self.gamma0 = gamma0
         self.decay = decay
@@ -44,7 +47,7 @@ class MongoOnlineAlgorithm(ABC):
 
         # Initialize MongoDB connection
         self.client = MongoClient(mongo_uri)
-        self.db = self.client[mongo_db_name]
+        self.db = self.client[self.__class__.__name__]
 
         # Initialize collections if they don't exist
         collections = [
@@ -81,7 +84,7 @@ class MongoOnlineAlgorithm(ABC):
         return self.gamma0 / (self.t) ** self.decay
 
     def drop(self):
-        self.client.drop_database("online_algorithm")
+        self.client.drop_database(self.__class__.__name__)
 
     def _load_pi_for_worker(self, worker_id: str) -> np.ndarray:
         doc = self.db.worker_confusion_matrices.find_one({"_id": worker_id})
@@ -487,97 +490,40 @@ class MongoOnlineAlgorithm(ABC):
             self.db.task_class_probs.bulk_write(updates)
             self._normalize_probs(list(task_mapping.keys()))
 
+    @profile
     def _normalize_probs(self, updated_task_ids: list[str]) -> None:
-        pipeline = [
-            {
-                "$set": {
-                    "probs": {
-                        "$let": {
-                            "vars": {
-                                "probs_array": {"$objectToArray": "$probs"},
-                                "total": {
-                                    "$sum": {
-                                        "$map": {
-                                            "input": {
-                                                "$objectToArray": "$probs",
-                                            },
-                                            "as": "item",
-                                            "in": "$$item.v",
-                                        },
-                                    },
-                                },
-                            },
-                            "in": {
-                                "$arrayToObject": {
-                                    "$map": {
-                                        "input": "$$probs_array",
-                                        "as": "item",
-                                        "in": {
-                                            "k": "$$item.k",
-                                            "v": {
-                                                "$cond": {
-                                                    "if": {
-                                                        "$eq": ["$$total", 0],
-                                                    },
-                                                    "then": 0,
-                                                    "else": {
-                                                        "$divide": [
-                                                            "$$item.v",
-                                                            "$$total",
-                                                        ],
-                                                    },
-                                                },
-                                            },
-                                        },
-                                    },
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-            {
-                "$set": {
-                    "current_answer": {
-                        "$let": {
-                            "vars": {
-                                "probs_array": {"$objectToArray": "$probs"},
-                            },
-                            "in": {
-                                "$arrayElemAt": [
-                                    {
-                                        "$map": {
-                                            "input": {
-                                                "$filter": {
-                                                    "input": "$$probs_array",
-                                                    "as": "item",
-                                                    "cond": {
-                                                        "$eq": [
-                                                            "$$item.v",
-                                                            {
-                                                                "$max": "$$probs_array.v",
-                                                            },
-                                                        ],
-                                                    },
-                                                },
-                                            },
-                                            "as": "item",
-                                            "in": "$$item.k",
-                                        },
-                                    },
-                                    0,
-                                ],
-                            },
-                        },
-                    },
-                },
-            },
-        ]
-
-        self.db.task_class_probs.update_many(
-            {"_id": {"$in": updated_task_ids}},
-            pipeline,
+        docs = list(
+            self.db.task_class_probs.find(
+                {"_id": {"$in": updated_task_ids}},
+                {"_id": 1, "probs": 1},
+            ),
         )
+
+        updates = []
+        for doc in docs:
+            probs = doc["probs"]
+            total = sum(probs.values())
+            if total == 0:
+                normalized = dict.fromkeys(probs, 0)
+            else:
+                normalized = {k: v / total for k, v in probs.items()}
+
+            current_answer = max(normalized, key=normalized.get)
+
+            updates.append(
+                UpdateOne(
+                    {"_id": doc["_id"]},
+                    {
+                        "$set": {
+                            "probs": normalized,
+                            "current_answer": current_answer,
+                        },
+                    },
+                ),
+            )
+
+        if updates:
+            self.db.task_class_probs.bulk_write(updates)
 
     def _online_update_rho(
         self,
@@ -723,12 +669,12 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
     Global rho, pi and T are stored sparsly in MongoDB.
     used in class SparseMongoOnlineAlgorithm"""
 
+    @profile
     def __init__(
         self,
         gamma0: Annotated[float, Ge(0)] = 1.0,
         decay: Annotated[float, Gt(0)] = 0.6,
         mongo_uri: str = "mongodb://localhost:27017/",
-        mongo_db_name: str = "online_algorithm",
     ) -> None:
         self.gamma0 = gamma0
         self.decay = decay
@@ -736,7 +682,7 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
 
         # Initialize MongoDB connection
         self.client = MongoClient(mongo_uri)
-        self.db = self.client[mongo_db_name]
+        self.db = self.client[self.__class__.__name__]
 
         # Initialize collections if they don't exist
         collections = [
@@ -773,8 +719,9 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         return self.gamma0 / (self.t) ** self.decay
 
     def drop(self):
-        self.client.drop_database("online_algorithm")
+        self.client.drop_database(self.__class__.__name__)
 
+    @profile
     def _load_pi_for_worker(self, worker_id: str) -> np.ndarray:
         doc = self.db.worker_confusion_matrices.find_one({"_id": worker_id})
         n_classes = self.n_classes
@@ -788,6 +735,7 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
                     confusion_matrix[from_idx, to_idx] = prob
         return confusion_matrix
 
+    @profile
     def _update_pi_for_worker_in_mongodb(
         self,
         worker_id: int,
@@ -875,6 +823,7 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
             pi[worker_id, :, :] = self._load_pi_for_worker(str(worker_id))
         return pi
 
+    @profile
     def get_or_create_indices(self, collection, keys: list[Hashable]) -> dict:
         existing_docs = collection.find({"_id": {"$in": keys}})
         existing_map = {doc["_id"]: doc["index"] for doc in existing_docs}
@@ -894,6 +843,7 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
 
         return existing_map
 
+    @profile
     def _prepare_mapping(
         self,
         batch: AnswersDict,
@@ -913,6 +863,7 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
                 if str(class_id) not in class_mapping:
                     class_mapping[str(class_id)] = len(class_mapping)
 
+    @profile
     def _process_batch_to_matrix(
         self,
         batch: AnswersDict,
@@ -942,6 +893,7 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
 
         return sp.COO(coords, data=True, shape=shape)
 
+    @profile
     def _init_T(
         self,
         batch_matrix: np.ndarray,
@@ -975,10 +927,12 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
 
         return sp.COO(batch_T)
 
+    @profile
     def get_probas(self) -> np.ndarray:
         """Get current estimates of task-class probabilities"""
         return self.T
 
+    @profile
     def get_answers(self) -> np.ndarray:
         """Get current most likely class for each task. Shouldn't
         be used."""
@@ -993,6 +947,7 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         map_back = np.vectorize(lambda x: rev_class[x])
         return map_back(np.argmax(T, axis=1))
 
+    @profile
     def get_answer(self, task_id):
         """Get current most likely class for each task. Shouldn't
         be used."""
@@ -1001,6 +956,7 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
             "current_answer"
         ]
 
+    @profile
     def process_batch(
         self,
         batch: AnswersDict,
@@ -1036,6 +992,7 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
             epsilon,
         )
 
+    @profile
     def process_batch_matrix(
         self,
         batch_matrix: np.ndarray,
@@ -1058,6 +1015,7 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
             maxiter,
         )
 
+    @profile
     def _em_loop_on_batch(
         self,
         batch_matrix: np.ndarray,
@@ -1104,6 +1062,7 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
 
         return ll
 
+    @profile
     def _online_update(
         self,
         task_mapping: TaskMapping,
@@ -1117,167 +1076,163 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         self._online_update_rho(class_mapping, batch_rho)
         self._online_update_pi(worker_mapping, class_mapping, batch_pi)
 
+    @profile
     def _online_update_T(
         self,
         task_mapping: TaskMapping,
         class_mapping: ClassMapping,
-        batch_T: np.ndarray,
+        batch_T: sp.COO,
     ) -> None:
         scale = 1 - self.gamma
+
+        task_names = np.array([k for k in task_mapping])
+        task_indices = np.array([task_mapping[name] for name in task_names])
+        class_names = np.array([k for k in class_mapping])
+        class_indices = np.array([class_mapping[name] for name in class_names])
+
+        row_idx, col_idx = batch_T.coords
+
+        data = batch_T.data
+
+        task_name_arr = np.array(
+            [task_names[task_indices == i][0] for i in row_idx],
+        )
+        class_name_arr = np.array(
+            [class_names[class_indices == j][0] for j in col_idx],
+        )
+        keys = np.char.add(task_name_arr, "::")
+        keys = np.char.add(keys, class_name_arr)
+
+        delta_map = defaultdict(float)
+        for k, d in zip(keys, data):
+            delta_map[k] += d * self.gamma
+
+        task_ids = list(set(k.split("::")[0] for k in delta_map))
+        docs = self.db.task_class_probs.find(
+            {"_id": {"$in": task_ids}},
+            {"_id": 1, "probs": 1},
+        )
+        task_to_probs = {doc["_id"]: doc.get("probs", {}) for doc in docs}
+
+        updates_by_task = defaultdict(dict)
+        for k, delta in delta_map.items():
+            task_name, class_name = k.split("::")
+            old_val = task_to_probs.get(task_name, {}).get(class_name, 0.0)
+            new_val = old_val * scale + delta
+            if new_val != 0.0:
+                updates_by_task[task_name][f"probs.{class_name}"] = new_val
+            else:
+                updates_by_task[task_name][f"probs.{class_name}"] = None
+
         updates = []
-        batch_T = sp.DOK(batch_T)
-
-        for task_name, batch_task_idx in task_mapping.items():
-            set_stage = {}
-            for class_name, batch_class_idx in class_mapping.items():
-                delta = batch_T[batch_task_idx, batch_class_idx] * self.gamma
-                set_stage[f"probs.{class_name}"] = {
-                    "$cond": {
-                        "if": {
-                            "$ne": [
-                                {
-                                    "$add": [
-                                        {
-                                            "$multiply": [
-                                                {
-                                                    "$ifNull": [
-                                                        f"$probs.{class_name}",
-                                                        0,
-                                                    ],
-                                                },
-                                                scale,
-                                            ],
-                                        },
-                                        delta,
-                                    ],
-                                },
-                                0,
-                            ],
-                        },
-                        "then": {
-                            "$add": [
-                                {
-                                    "$multiply": [
-                                        {
-                                            "$ifNull": [
-                                                f"$probs.{class_name}",
-                                                0,
-                                            ],
-                                        },
-                                        scale,
-                                    ],
-                                },
-                                delta,
-                            ],
-                        },
-                        "else": "$$REMOVE",
-                    },
-                }
-
+        for task_name, fields in updates_by_task.items():
+            set_fields = {k: v for k, v in fields.items() if v is not None}
+            unset_fields = {k: "" for k, v in fields.items() if v is None}
+            pipeline = []
+            if set_fields:
+                pipeline.append({"$set": set_fields})
+            if unset_fields:
+                pipeline.append({"$unset": unset_fields})
             updates.append(
-                UpdateOne(
-                    {"_id": task_name},
-                    [{"$set": set_stage}],
-                    upsert=True,
-                ),
+                UpdateOne({"_id": task_name}, pipeline, upsert=True),
             )
 
         if updates:
-            self.db.task_class_probs.bulk_write(updates)
-            self._normalize_probs(list(task_mapping.keys()))
+            self.db.task_class_probs.bulk_write(updates, ordered=False)
+            self._normalize_probs(task_ids)
 
-    def _normalize_probs(self, updated_task_ids: list[str]) -> None:
-        pipeline = [
-            {
-                "$set": {
-                    "probs": {
-                        "$let": {
-                            "vars": {
-                                "probs_array": {"$objectToArray": "$probs"},
-                                "total": {
-                                    "$sum": {
-                                        "$map": {
-                                            "input": {
-                                                "$objectToArray": "$probs",
-                                            },
-                                            "as": "item",
-                                            "in": "$$item.v",
-                                        },
-                                    },
-                                },
-                            },
-                            "in": {
-                                "$arrayToObject": {
-                                    "$map": {
-                                        "input": "$$probs_array",
-                                        "as": "item",
-                                        "in": {
-                                            "k": "$$item.k",
-                                            "v": {
-                                                "$cond": {
-                                                    "if": {
-                                                        "$eq": ["$$total", 0],
-                                                    },
-                                                    "then": 0,
-                                                    "else": {
-                                                        "$divide": [
-                                                            "$$item.v",
-                                                            "$$total",
-                                                        ],
-                                                    },
-                                                },
-                                            },
-                                        },
-                                    },
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-            {
-                "$set": {
-                    "current_answer": {
-                        "$let": {
-                            "vars": {
-                                "probs_array": {"$objectToArray": "$probs"},
-                            },
-                            "in": {
-                                "$arrayElemAt": [
-                                    {
-                                        "$map": {
-                                            "input": {
-                                                "$filter": {
-                                                    "input": "$$probs_array",
-                                                    "as": "item",
-                                                    "cond": {
-                                                        "$eq": [
-                                                            "$$item.v",
-                                                            {
-                                                                "$max": "$$probs_array.v",
-                                                            },
-                                                        ],
-                                                    },
-                                                },
-                                            },
-                                            "as": "item",
-                                            "in": "$$item.k",
-                                        },
-                                    },
-                                    0,
-                                ],
-                            },
-                        },
-                    },
-                },
-            },
-        ]
+    # @profile
+    # def _online_update_T(
+    #     self,
+    #     task_mapping: TaskMapping,
+    #     class_mapping: ClassMapping,
+    #     batch_T: sp.COO,
+    # ) -> None:
+    #     scale = 1 - self.gamma
+    #     updates = []
 
-        self.db.task_class_probs.update_many(
-            {"_id": {"$in": updated_task_ids}},
-            pipeline,
-        )
+    #     # Convert batch_T to CSR format for fast row slicing
+    #     batch_T = batch_T.tocsr()
 
+    #     # Map names to indices for ordered processing
+    #     task_names = list(task_mapping.keys())
+    #     task_indices = np.array([task_mapping[name] for name in task_names])
+
+    #     class_names = list(class_mapping.keys())
+    #     class_indices = np.array([class_mapping[name] for name in class_names])
+
+    #     # Slice submatrix: shape = (num_tasks, num_classes)
+    #     sub_matrix = batch_T[task_indices, :][:, class_indices]  # Still sparse
+    #     deltas = sub_matrix.multiply(
+    #         self.gamma,
+    #     ).tocoo()  # COO is easy to iterate
+
+    #     # Pre-construct inverse maps for name lookup
+    #     task_idx_to_name = {v: k for k, v in task_mapping.items()}
+    #     class_idx_to_name = {v: k for k, v in class_mapping.items()}
+
+    #     # Organize deltas by task
+    #     updates_by_task = {task_name: {} for task_name in task_names}
+
+    #     for i, j, delta in zip(deltas.row, deltas.col, deltas.data):
+    #         task_idx = task_indices[i]
+    #         class_idx = class_indices[j]
+    #         task_name = task_idx_to_name[task_idx]
+    #         class_name = class_idx_to_name[class_idx]
+
+    #         updates_by_task[task_name][f"probs.{class_name}"] = {
+    #             "$cond": {
+    #                 "if": {
+    #                     "$ne": [
+    #                         {
+    #                             "$add": [
+    #                                 {
+    #                                     "$multiply": [
+    #                                         {
+    #                                             "$ifNull": [
+    #                                                 f"$probs.{class_name}",
+    #                                                 0,
+    #                                             ],
+    #                                         },
+    #                                         scale,
+    #                                     ],
+    #                                 },
+    #                                 delta,
+    #                             ],
+    #                         },
+    #                         0,
+    #                     ],
+    #                 },
+    #                 "then": {
+    #                     "$add": [
+    #                         {
+    #                             "$multiply": [
+    #                                 {"$ifNull": [f"$probs.{class_name}", 0]},
+    #                                 scale,
+    #                             ],
+    #                         },
+    #                         delta,
+    #                     ],
+    #                 },
+    #                 "else": "$$REMOVE",
+    #             },
+    #         }
+
+    #     # Create UpdateOne operations
+    #     for task_name, set_stage in updates_by_task.items():
+    #         updates.append(
+    #             UpdateOne(
+    #                 {"_id": task_name},
+    #                 [{"$set": set_stage}],
+    #                 upsert=True,
+    #             ),
+    #         )
+
+    #     if updates:
+    #         self.db.task_class_probs.bulk_write(updates)
+    #         self._normalize_probs(task_names)
+
+    @profile
     def _online_update_rho(
         self,
         class_mapping: ClassMapping,
@@ -1313,6 +1268,7 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         if ops:
             self.db.class_priors.bulk_write(ops)
 
+    @profile
     def _online_update_pi(
         self,
         worker_mapping: WorkerMapping,

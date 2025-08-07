@@ -1,5 +1,6 @@
 from typing import Annotated
 
+import line_profiler
 import numpy as np
 from annotated_types import Ge, Gt
 from pydantic import validate_call
@@ -51,6 +52,7 @@ class PooledDiagonalMultinomialOnline(OnlineAlgorithm):
                 i_global
             ] + self.gamma * batch_pi[i_batch]
 
+    @line_profiler.profile
     def _m_step(
         self,
         batch_matrix: np.ndarray,
@@ -70,6 +72,7 @@ class PooledDiagonalMultinomialOnline(OnlineAlgorithm):
 
         return batch_rho, batch_pi
 
+    @line_profiler.profile
     def _e_step(
         self,
         batch_matrix: np.ndarray,
@@ -122,6 +125,7 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
     ) -> None:
         super().__init__(gamma0, decay)
 
+    @line_profiler.profile
     def _m_step(
         self,
         batch_matrix: np.ndarray,
@@ -174,30 +178,33 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
         class_mapping: ClassMapping,
         batch_pi: np.ndarray,  # shape: (n_batch_classes,)
     ) -> None:
+        # Fetch class documents from the database that are in the batch
         class_docs = list(
             self.db.class_mapping.find(
                 {"_id": {"$in": list(class_mapping.keys())}},
             ),
         )
+        # Create a mapping from batch class indices to global class indices
         batch_to_global = {
             class_mapping[doc["_id"]]: doc["index"] for doc in class_docs
         }
+
+        # Fetch the pooled confusion matrix
         pooled_doc = self.db.worker_confusion_matrices.find_one(
-            {"_id": "pooled"},
+            {"_id": "pooledDiagonalMultinomial"},
         )
         confusion_matrix = (
             pooled_doc.get("confusion_matrix", []) if pooled_doc else []
         )
-
         entry_map = {
             entry["class_id"]: entry
             for entry in confusion_matrix
             if "class_id" in entry
         }
-        print(f"{entry_map=}")
+
+        # Update the confusion matrix entries
         for i_batch, i_global in batch_to_global.items():
             batch_prob = batch_pi[i_batch]
-
             if i_global in entry_map:
                 entry = entry_map[i_global]
                 entry["prob"] = (1 - self.gamma) * entry[
@@ -213,12 +220,14 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
                 confusion_matrix.append(entry)
                 entry_map[i_global] = entry
 
+        # Update the confusion matrix in the database
         self.db.worker_confusion_matrices.update_one(
             {"_id": "pooledDiagonalMultinomial"},
             {"$set": {"confusion_matrix": confusion_matrix}},
             upsert=True,
         )
 
+    @line_profiler.profile
     def _e_step(
         self,
         batch_matrix: np.ndarray,
