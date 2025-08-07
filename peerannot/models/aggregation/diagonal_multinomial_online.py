@@ -188,13 +188,11 @@ class VectorizedDiagonalMultinomialOnlineMongo(
         gamma = self.gamma
         worker_ids = list(worker_mapping.keys())
 
-        # Step 1: Map batch class indices → global class IDs
         batch_to_global = {
             batch_idx: class_mapping[class_name]
             for class_name, batch_idx in class_mapping.items()
         }
 
-        # Step 2: Fetch current confusion matrices in one go
         worker_docs = self.db.worker_confusion_matrices.find(
             {"_id": {"$in": worker_ids}},
         )
@@ -202,13 +200,11 @@ class VectorizedDiagonalMultinomialOnlineMongo(
             doc["_id"]: doc.get("confusion_matrix", []) for doc in worker_docs
         }
 
-        # Step 3: Create UpdateOne ops for each worker
         updates = []
 
         for worker_id, batch_worker_idx in worker_mapping.items():
             existing_matrix = worker_confusions.get(worker_id, [])
 
-            # Build fast lookup: class_id -> entry
             entry_map = {
                 entry["class_id"]: entry
                 for entry in existing_matrix
@@ -231,12 +227,10 @@ class VectorizedDiagonalMultinomialOnlineMongo(
                 updated_entries[global_class_id] = new_prob
 
             if not updated_entries:
-                continue  # nothing to update for this worker
+                continue
 
-            # Rebuild full confusion matrix
             new_confusion_matrix = []
 
-            # Keep updated or new entries
             seen = set(updated_entries.keys())
             for class_id, prob in updated_entries.items():
                 new_confusion_matrix.append(
@@ -246,13 +240,11 @@ class VectorizedDiagonalMultinomialOnlineMongo(
                     },
                 )
 
-            # Retain unchanged entries from existing matrix
             for entry in existing_matrix:
                 cid = entry["class_id"]
                 if cid not in seen:
                     new_confusion_matrix.append(entry)
 
-            # Create update op
             updates.append(
                 UpdateOne(
                     {"_id": worker_id},
@@ -261,7 +253,6 @@ class VectorizedDiagonalMultinomialOnlineMongo(
                 ),
             )
 
-        # Step 4: Run bulk write
         if updates:
             self.db.worker_confusion_matrices.bulk_write(updates)
 
