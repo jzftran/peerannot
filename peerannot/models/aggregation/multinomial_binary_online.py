@@ -211,48 +211,6 @@ class VectorizedMultinomialBinaryOnlineMongo(
         if updates:
             self.db.worker_confusion_matrices.bulk_write(updates)
 
-    def replace_diag_coo(class_worker_probs, batch_pi):
-        """
-        Replace diagonal entries in a (n_classes, n_workers, n_classes) COO array
-        with batch_pi (shape: n_workers,).
-        Returns a new COO array (no in-place update).
-        """
-        n_classes, n_workers, _ = class_worker_probs.shape
-
-        # Build coordinates for diagonal entries
-        diag_coords = np.vstack(
-            [
-                np.arange(n_classes),  # true class index
-                np.arange(n_workers),  # worker index
-                np.arange(
-                    n_classes,
-                ),  # assigned class index (same as true class)
-            ],
-        )
-
-        # Repeat batch_pi for each class
-        diag_values = np.repeat(batch_pi, n_classes)
-
-        # Build sparse diagonal matrix
-        diag_sparse = sp.COO(
-            coords=diag_coords,
-            data=diag_values,
-            shape=(n_classes, n_workers, n_classes),
-        )
-
-        # Remove old diagonal entries from the original COO
-        mask_no_diag = ~(
-            class_worker_probs.coords[0] == class_worker_probs.coords[2]
-        )
-        class_worker_probs_no_diag = sp.COO(
-            coords=class_worker_probs.coords[:, mask_no_diag],
-            data=class_worker_probs.data[mask_no_diag],
-            shape=class_worker_probs.shape,
-        )
-
-        # Merge: addition here is safe because diagonals were removed
-        return class_worker_probs_no_diag + diag_sparse
-
     @profile
     def _e_step(
         self,
