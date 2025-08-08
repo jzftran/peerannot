@@ -1,9 +1,15 @@
 from typing import Annotated
 
 import numpy as np
+import sparse as sp
 from annotated_types import Ge, Gt
+from line_profiler import profile
 from pydantic import validate_call
+from pymongo import UpdateOne
 
+from peerannot.models.aggregation.mongo_online_helpers import (
+    SparseMongoOnlineAlgorithm,
+)
 from peerannot.models.aggregation.online_helpers import OnlineAlgorithm
 from peerannot.models.aggregation.types import ClassMapping, WorkerMapping
 
@@ -38,9 +44,12 @@ class MultinomialBinaryOnline(OnlineAlgorithm):
         # Update only workers present in the batch
         for worker, batch_worker_idx in worker_mapping.items():
             worker_idx = self.worker_mapping[worker]
-            self.pi[worker_idx] = (1 - self.gamma) * self.pi[
-                worker_idx,
-            ] + self.gamma * batch_pi[batch_worker_idx,]
+            if self.pi[worker_idx] == 0:
+                self.pi[worker_idx] = batch_pi[batch_worker_idx,]
+            else:
+                self.pi[worker_idx] = (1 - self.gamma) * self.pi[
+                    worker_idx,
+                ] + self.gamma * batch_pi[batch_worker_idx,]
 
     def _m_step(
         self,
@@ -61,7 +70,6 @@ class MultinomialBinaryOnline(OnlineAlgorithm):
                 where=labeled_count > 0,
             )
             batch_pi[j] = alpha
-
         return batch_rho, batch_pi
 
     def _e_step(
@@ -102,3 +110,197 @@ class MultinomialBinaryOnline(OnlineAlgorithm):
 
         batch_T = np.where(batch_denom_e_step > 0, T / batch_denom_e_step, T)
         return batch_T, batch_denom_e_step
+
+
+# %%
+class VectorizedMultinomialBinaryOnlineMongo(
+    SparseMongoOnlineAlgorithm,
+):
+    """Vectorized pooled diagonal multinomial binary online algorithm
+    using sparse matrices and mongo."""
+
+    @validate_call
+    def __init__(
+        self,
+        gamma0: Annotated[float, Ge(0)] = 1.0,
+        decay: Annotated[float, Gt(0)] = 0.6,
+    ) -> None:
+        super().__init__(gamma0, decay)
+
+    @profile
+    def _m_step(
+        self,
+        batch_matrix: np.ndarray,  # shape: (n_samples, n_workers, n_classes)
+        batch_T: np.ndarray,  # shape: (n_samples, n_classes)
+    ) -> tuple[np.ndarray, np.ndarray]:
+        batch_rho = batch_T.mean(axis=0)
+
+        # shape: (n_samples, n_workers)
+
+        weighted = np.sum(
+            np.multiply(batch_T[:, None, :], batch_matrix),
+            axis=2,
+        )
+
+        # Sum over samples to get total weighted contribution per worker
+        weighted_sums = np.sum(
+            weighted,
+            axis=0,
+        )  # shape: (n_workers,)
+
+        labeled_counts = np.sum(
+            batch_matrix,
+            axis=(0, 2),
+        ).todense()  # shape: (n_workers,)
+
+        # weighted_sums = weighted_sums.todense()
+        batch_pi = np.where(
+            labeled_counts > 0,
+            weighted_sums / labeled_counts,
+            weighted_sums,
+        )
+
+        return batch_rho, batch_pi
+
+    @profile
+    def _online_update_pi(
+        self,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
+        batch_pi: np.ndarray,
+    ) -> None:
+        # Fetch all existing confusion matrices for these workers
+        worker_ids = list(worker_mapping.keys())
+        worker_docs = self.db.worker_confusion_matrices.find(
+            {"_id": {"$in": worker_ids}},
+        )
+        worker_confusions = {
+            doc["_id"]: doc.get("confusion_matrix", None)
+            for doc in worker_docs
+        }
+
+        updates = []
+
+        for worker_id, batch_worker_idx in worker_mapping.items():
+            pi_new_value = batch_pi[batch_worker_idx]
+            existing_entry = worker_confusions.get(worker_id)
+            if existing_entry is None:
+                # No previous pi — store it directly
+                updates.append(
+                    UpdateOne(
+                        {"_id": worker_id},
+                        {"$set": {"confusion_matrix": {"prob": pi_new_value}}},
+                        upsert=True,
+                    ),
+                )
+            else:
+                pi_old_value = existing_entry["prob"]
+
+                # Online update
+                pi_updated = (
+                    1 - self.gamma
+                ) * pi_old_value + self.gamma * pi_new_value
+                updates.append(
+                    UpdateOne(
+                        {"_id": worker_id},
+                        {"$set": {"confusion_matrix": {"prob": pi_updated}}},
+                        upsert=True,
+                    ),
+                )
+
+        if updates:
+            self.db.worker_confusion_matrices.bulk_write(updates)
+
+    def replace_diag_coo(class_worker_probs, batch_pi):
+        """
+        Replace diagonal entries in a (n_classes, n_workers, n_classes) COO array
+        with batch_pi (shape: n_workers,).
+        Returns a new COO array (no in-place update).
+        """
+        n_classes, n_workers, _ = class_worker_probs.shape
+
+        # Build coordinates for diagonal entries
+        diag_coords = np.vstack(
+            [
+                np.arange(n_classes),  # true class index
+                np.arange(n_workers),  # worker index
+                np.arange(
+                    n_classes,
+                ),  # assigned class index (same as true class)
+            ],
+        )
+
+        # Repeat batch_pi for each class
+        diag_values = np.repeat(batch_pi, n_classes)
+
+        # Build sparse diagonal matrix
+        diag_sparse = sp.COO(
+            coords=diag_coords,
+            data=diag_values,
+            shape=(n_classes, n_workers, n_classes),
+        )
+
+        # Remove old diagonal entries from the original COO
+        mask_no_diag = ~(
+            class_worker_probs.coords[0] == class_worker_probs.coords[2]
+        )
+        class_worker_probs_no_diag = sp.COO(
+            coords=class_worker_probs.coords[:, mask_no_diag],
+            data=class_worker_probs.data[mask_no_diag],
+            shape=class_worker_probs.shape,
+        )
+
+        # Merge: addition here is safe because diagonals were removed
+        return class_worker_probs_no_diag + diag_sparse
+
+    @profile
+    def _e_step(
+        self,
+        batch_matrix: sp.COO,
+        batch_pi: np.ndarray,
+        batch_rho: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        _, n_workers, n_classes = batch_matrix.shape
+
+        # Compute per-worker off-diagonal probabilities
+        off_diag_alpha = (1.0 - batch_pi) / (
+            n_classes - 1
+        )  # shape: (n_workers,)
+
+        class_worker_probs = np.broadcast_to(
+            off_diag_alpha[None, :, None],
+            (n_classes, n_workers, n_classes),
+        )
+
+        # Create a mask for diagonal elements where true class == assigned class
+        eye_mask = sp.eye(n_classes, dtype=bool)[
+            None,
+            :,
+            :,
+        ]  # shape: (1, n_classes, n_classes)
+        eye_mask = np.broadcast_to(
+            eye_mask,
+            (n_workers, n_classes, n_classes),
+        ).transpose((1, 0, 2))
+
+        # Set diagonal entries to batch_pi
+        class_worker_probs = np.where(
+            eye_mask,
+            batch_pi[None, :, None],
+            class_worker_probs,
+        )
+
+        probs = np.power(
+            class_worker_probs[None, :, :, :],
+            batch_matrix[:, None, :, :],
+        )
+        likelihood = np.prod(probs, axis=(2, 3))  # shape: (n_tasks, n_classes)
+
+        T = likelihood * batch_rho[None, :]  # shape: (n_tasks, n_classes)
+
+        denom = T.sum(axis=1, keepdims=True)
+
+        denom = denom.todense()
+        batch_T = np.where(denom > 0, T / denom, T)
+
+        return batch_T, denom
