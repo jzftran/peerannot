@@ -215,50 +215,42 @@ class VectorizedMultinomialBinaryOnlineMongo(
     def _e_step(
         self,
         batch_matrix: sp.COO,
-        batch_pi: np.ndarray,
-        batch_rho: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        _, n_workers, n_classes = batch_matrix.shape
+        batch_pi: sp.COO,
+        batch_rho: sp.COO,
+    ) -> tuple[sp.COO, np.ndarray]:
+        n_tasks, _, n_classes = batch_matrix.shape
 
         # Compute per-worker off-diagonal probabilities
         off_diag_alpha = (1.0 - batch_pi) / (
             n_classes - 1
         )  # shape: (n_workers,)
 
-        class_worker_probs = np.broadcast_to(
-            off_diag_alpha[None, :, None],
-            (n_classes, n_workers, n_classes),
+        # Extract COO coords & counts
+        tasks, workers, assigned_classes = batch_matrix.coords
+        counts = batch_matrix.data
+
+        # Shape: (nnz, n_classes),  probability for each possible true_class
+        match_mask = assigned_classes[:, None] == np.arange(n_classes)[None, :]
+
+        probs_nnz = (
+            np.where(
+                match_mask,
+                batch_pi[workers][:, None],
+                off_diag_alpha[workers][:, None],
+            )
+            ** counts[:, None]
         )
 
-        # Create a mask for diagonal elements where true class == assigned class
-        eye_mask = sp.eye(n_classes, dtype=bool)[
-            None,
-            :,
-            :,
-        ]  # shape: (1, n_classes, n_classes)
-        eye_mask = np.broadcast_to(
-            eye_mask,
-            (n_workers, n_classes, n_classes),
-        ).transpose((1, 0, 2))
+        likelihood = np.ones((n_tasks, n_classes), dtype=np.float64)
 
-        # Set diagonal entries to batch_pi
-        class_worker_probs = np.where(
-            eye_mask,
-            batch_pi[None, :, None],
-            class_worker_probs,
+        np.multiply.at(
+            likelihood,
+            (tasks[:, None], np.arange(n_classes)[None, :]),
+            probs_nnz,
         )
+        T = likelihood * batch_rho[None, :]
+        denom = T.sum(axis=1, keepdims=True).todense()
 
-        probs = np.power(
-            class_worker_probs[None, :, :, :],
-            batch_matrix[:, None, :, :],
-        )
-        likelihood = np.prod(probs, axis=(2, 3))  # shape: (n_tasks, n_classes)
-
-        T = likelihood * batch_rho[None, :]  # shape: (n_tasks, n_classes)
-
-        denom = T.sum(axis=1, keepdims=True)
-
-        denom = denom.todense()
         batch_T = np.where(denom > 0, T / denom, T)
 
         return batch_T, denom
