@@ -1,8 +1,9 @@
 from typing import Annotated
 
-import line_profiler
 import numpy as np
+import sparse as sp
 from annotated_types import Ge, Gt
+from line_profiler import profile
 from pydantic import validate_call
 
 from peerannot.models.aggregation.mongo_online_helpers import (
@@ -52,7 +53,7 @@ class PooledDiagonalMultinomialOnline(OnlineAlgorithm):
                 i_global
             ] + self.gamma * batch_pi[i_batch]
 
-    @line_profiler.profile
+    @profile
     def _m_step(
         self,
         batch_matrix: np.ndarray,
@@ -72,7 +73,7 @@ class PooledDiagonalMultinomialOnline(OnlineAlgorithm):
 
         return batch_rho, batch_pi
 
-    @line_profiler.profile
+    @profile
     def _e_step(
         self,
         batch_matrix: np.ndarray,
@@ -125,7 +126,7 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
     ) -> None:
         super().__init__(gamma0, decay)
 
-    @line_profiler.profile
+    @profile
     def _m_step(
         self,
         batch_matrix: np.ndarray,
@@ -172,6 +173,7 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
 
         return batch_rho, batch_pi
 
+    @profile
     def _online_update_pi(
         self,
         worker_mapping: WorkerMapping,
@@ -227,18 +229,18 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
             upsert=True,
         )
 
-    @line_profiler.profile
+    @profile
     def _e_step(
         self,
-        batch_matrix: np.ndarray,
-        batch_pi: np.ndarray,
-        batch_rho: np.ndarray,
+        batch_matrix: sp.COO,
+        batch_pi: sp.COO,
+        batch_rho: sp.COO,
     ):
         n_classes = len(batch_pi)
 
         diag_terms = np.power(batch_pi[None, None, :], batch_matrix)
 
-        batch_pi_non_diag_values = (1.0 - batch_pi) / (n_classes - 1)
+        batch_pi_non_diag_values = (1.0 - batch_pi) / batch_matrix.shape[0]
 
         # shape (n_task, n_worker, n_classes)
         all_terms = np.power(
