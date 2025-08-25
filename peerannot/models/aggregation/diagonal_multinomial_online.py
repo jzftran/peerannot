@@ -162,20 +162,20 @@ class VectorizedDiagonalMultinomialOnlineMongo(
         batch_T: np.ndarray,  # shape: (n_tasks, n_classes)
     ) -> tuple[np.ndarray, np.ndarray]:
         batch_rho = batch_T.mean(axis=0)
-
         batch_n_classes = batch_matrix.shape[2]
 
-        pij_all = np.einsum(
-            "jb,wbc->jwc",
+        pij_all = np.tensordot(
             batch_T.T,
             batch_matrix.transpose((1, 0, 2)),
+            axes=([1], [1]),
         )
+
         denom_all = pij_all.sum(axis=2)
         denom_all_safe = np.where(denom_all > 0, denom_all, 1e-9)
+
         indices = np.arange(batch_n_classes)
         batch_pi = (pij_all[indices, :, indices] / denom_all_safe).T
-        # pi shape (n_workers, n_class), reresents how sure worker is
-        # sure that the label j is true
+
         return batch_rho, batch_pi
 
     @profile

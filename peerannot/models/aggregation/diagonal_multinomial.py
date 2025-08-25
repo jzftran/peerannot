@@ -136,7 +136,7 @@ class DiagonalMultinomial(DawidSkene):
                     worker_labels[:, j],
                 )  # shape (n_workers,)
 
-                # Off-diagonal contributions: product over l≠j of
+                # Off-diagonal contributions: product over l!=j of
                 # pi_non_diag[k,j]^worker_labels[k,l]
                 mask = np.ones(self.n_classes, dtype=bool)
                 mask[j] = False  # exclude current class j
