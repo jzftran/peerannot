@@ -11,6 +11,9 @@ from peerannot.models.aggregation.online_helpers import (
 
 
 class DawidSkeneMongo(MongoOnlineAlgorithm):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+
     def _e_step(
         self,
         batch_matrix: np.ndarray,
@@ -124,6 +127,9 @@ class DawidSkeneMongo(MongoOnlineAlgorithm):
 
 
 class DawidSkeneOnline(OnlineAlgorithm):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+
     def _e_step(
         self,
         batch_matrix: np.ndarray,

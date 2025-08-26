@@ -1,8 +1,5 @@
-from typing import Annotated
-
 import numpy as np
 import sparse as sp
-from annotated_types import Ge, Gt
 from line_profiler import profile
 from pydantic import validate_call
 from pymongo import UpdateOne
@@ -16,12 +13,8 @@ from peerannot.models.aggregation.types import ClassMapping, WorkerMapping
 
 class MultinomialBinaryOnline(OnlineAlgorithm):
     @validate_call
-    def __init__(
-        self,
-        gamma0: Annotated[float, Ge(0)] = 1.0,
-        decay: Annotated[float, Gt(0)] = 0.6,
-    ) -> None:
-        super().__init__(gamma0, decay)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
 
     def _expand_pi(self, new_n_workers: int, new_n_classes: int) -> None:
         """Expand the pi array if the number of workers or classes increases."""
@@ -120,12 +113,8 @@ class VectorizedMultinomialBinaryOnlineMongo(
     using sparse matrices and mongo."""
 
     @validate_call
-    def __init__(
-        self,
-        gamma0: Annotated[float, Ge(0)] = 1.0,
-        decay: Annotated[float, Gt(0)] = 0.6,
-    ) -> None:
-        super().__init__(gamma0, decay)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
 
     @profile
     def _m_step(
