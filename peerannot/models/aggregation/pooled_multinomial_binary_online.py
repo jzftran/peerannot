@@ -2,17 +2,14 @@ from __future__ import annotations
 
 from typing import (
     TYPE_CHECKING,
-    Annotated,
 )
 
 import numpy as np
-from annotated_types import Ge, Gt
 from line_profiler import profile
 from pydantic import validate_call
 
 from peerannot.models.aggregation.mongo_online_helpers import (
     SparseMongoOnlineAlgorithm,
-    SparseMongoOnlineAlgorithmTUpdate,
 )
 from peerannot.models.aggregation.online_helpers import (
     OnlineAlgorithm,
@@ -28,12 +25,8 @@ import sparse as sp
 
 class PooledMultinomialBinaryOnline(OnlineAlgorithm):
     @validate_call
-    def __init__(
-        self,
-        gamma0: Annotated[float, Ge(0)] = 1.0,
-        decay: Annotated[float, Gt(0)] = 0.6,
-    ) -> None:
-        super().__init__(gamma0, decay)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
 
         self.pi = np.array(0)  # 1 elem np.array
 
@@ -126,133 +119,8 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
     """Vectorized pooled multinomial binary online algorithm using sparse matrices and mongo."""
 
     @validate_call
-    def __init__(
-        self,
-        gamma0: Annotated[float, Ge(0)] = 1.0,
-        decay: Annotated[float, Gt(0)] = 0.6,
-    ) -> None:
-        super().__init__(gamma0, decay)
-
-    @profile
-    def _m_step(
-        self,
-        batch_matrix: np.ndarray,
-        batch_T: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        batch_rho = batch_T.mean(axis=0)
-
-        batch_T = sp.COO(batch_T)
-
-        # sp.einsum behaves differently
-        sum_diag_votes = np.einsum(
-            "tq, tiq ->",
-            batch_T,
-            batch_matrix,
-        )  # trace(T.T @ crowd_matrix)
-
-        batch_total_votes = batch_matrix.sum()
-        batch_pi = np.divide(
-            sum_diag_votes,
-            batch_total_votes,
-            out=np.zeros_like(sum_diag_votes),
-            where=(batch_total_votes != 0),
-        )
-
-        return batch_rho, batch_pi
-
-    @profile
-    def _online_update_pi(
-        self,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
-        batch_pi: np.ndarray,
-    ):
-        doc = self.db.worker_confusion_matrices.find_one(
-            {"_id": "pooledMultinomialBinary"},
-        )
-        pi_old = (
-            np.array(doc["confusion_matrix"])
-            if doc
-            else np.full_like(batch_pi, 0.5)  # init pi as 0.5
-        )
-
-        pi_new = pi_old + self.gamma * (batch_pi - pi_old)
-
-        # Store updated pi
-        self.db.worker_confusion_matrices.update_one(
-            {"_id": "pooledMultinomialBinary"},
-            {"$set": {"confusion_matrix": pi_new.tolist()}},
-            upsert=True,
-        )
-
-    @profile
-    def _e_step(
-        self,
-        batch_matrix: sp.COO,
-        batch_pi: sp.COO,
-        batch_rho: sp.COO,
-    ):
-        n_tasks, _, n_classes = batch_matrix.shape
-
-        # Extract COO coords & counts from batch_matrix
-        tasks, _, assigned_classes = batch_matrix.coords
-        counts = batch_matrix.data
-
-        # Create match mask (nnz, n_classes)
-        # This mask is True when the assigned class matches each possible true class
-        match_mask = assigned_classes[:, None] == np.arange(n_classes)[None, :]
-
-        # Compute per-worker off-diagonal probabilities
-        # Since batch_pi is scalar, off_diag_alpha is the same for all workers
-        off_diag_alpha = (1.0 - batch_pi) / (n_classes - 1)
-
-        # Compute probabilities for each non-zero entry and each possible true class
-        probs_nnz = (
-            np.where(
-                match_mask,
-                batch_pi,  # Correct assignment probability (scalar)
-                off_diag_alpha,  # Incorrect assignment probability (scalar)
-            )
-            ** counts[:, None]  # Raise to power of counts
-        )
-
-        # Initialize likelihood matrix
-        likelihood = np.ones((n_tasks, n_classes), dtype=np.float64)
-
-        # Accumulate products into the likelihood matrix
-        # For each non-zero entry, multiply its contribution into the likelihood
-        # for its task and all possible classes
-        np.multiply.at(
-            likelihood,
-            (
-                tasks[:, None],
-                np.arange(n_classes)[None, :],
-            ),  # Indices to update
-            probs_nnz,  # Values to multiply in
-        )
-
-        # Compute T by multiplying likelihood by class priors
-        T = likelihood * batch_rho[None, :]
-
-        # Compute normalization constants and final probabilities
-        denom = T.sum(axis=1, keepdims=True).todense()
-        batch_T = np.where(denom > 0, T / denom, T)
-
-        return batch_T, denom
-
-
-class VectorizedPooledMultinomialBinaryOnlineMongoTUpdate(
-    SparseMongoOnlineAlgorithmTUpdate
-):
-    """Vectorized pooled multinomial binary online algorithm using sparse matrices and mongo."""
-
-    @validate_call
-    def __init__(
-        self,
-        gamma0: Annotated[float, Ge(0)] = 1.0,
-        decay: Annotated[float, Gt(0)] = 0.6,
-    ) -> None:
-        super().__init__(gamma0, decay)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
 
     @profile
     def _m_step(

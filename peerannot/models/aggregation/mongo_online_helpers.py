@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import warnings
 from abc import ABC, abstractmethod
+from collections import defaultdict
+from heapq import nlargest
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -28,8 +30,6 @@ if TYPE_CHECKING:
     )
     from peerannot.models.template import AnswersDict
 
-from collections import defaultdict
-
 
 class MongoOnlineAlgorithm(ABC):
     """Batch EM is the same as in OnlineAlgorithm.
@@ -41,11 +41,13 @@ class MongoOnlineAlgorithm(ABC):
         gamma0: Annotated[float, Ge(0)] = 1.0,
         decay: Annotated[float, Gt(0)] = 0.6,
         mongo_uri: str = "mongodb://localhost:27017/",
+        top_k: Annotated[int, Gt(0)] | None = None,
         # mongo_db_name: str = "online_algorithm",
     ) -> None:
         self.gamma0 = gamma0
         self.decay = decay
         self.t = 0
+        self.top_k = top_k
 
         # Initialize MongoDB connection
         self.client = MongoClient(mongo_uri)
@@ -225,6 +227,12 @@ class MongoOnlineAlgorithm(ABC):
                     worker_mapping[str(worker_id)] = len(worker_mapping)
                 if str(class_id) not in class_mapping:
                     class_mapping[str(class_id)] = len(class_mapping)
+
+        self._reverse_task_mapping = {v: k for k, v in task_mapping.items()}
+        self._reverse_worker_mapping = {
+            v: k for k, v in worker_mapping.items()
+        }
+        self._reverse_class_mapping = {v: k for k, v in class_mapping.items()}
 
     def _process_batch_to_matrix(
         self,
@@ -421,7 +429,7 @@ class MongoOnlineAlgorithm(ABC):
         batch_rho: np.ndarray,
         batch_pi: np.ndarray,
     ) -> None:
-        self._online_update_T(task_mapping, class_mapping, batch_T)
+        self._online_update_T(task_mapping, class_mapping, batch_T, self.top_k)
         self._online_update_rho(class_mapping, batch_rho)
         self._online_update_pi(worker_mapping, class_mapping, batch_pi)
 
@@ -430,6 +438,7 @@ class MongoOnlineAlgorithm(ABC):
         task_mapping: TaskMapping,
         class_mapping: ClassMapping,
         batch_T: np.ndarray,
+        top_k: int | None = None,
     ) -> None:
         scale = 1 - self.gamma
         updates = []
@@ -677,10 +686,12 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         gamma0: Annotated[float, Ge(0)] = 1.0,
         decay: Annotated[float, Gt(0)] = 0.6,
         mongo_uri: str = "mongodb://localhost:27017/",
+        top_k: Annotated[int, Gt(0)] | None = None,
     ) -> None:
         self.gamma0 = gamma0
         self.decay = decay
         self.t = 0
+        self.top_k = top_k
 
         # Initialize MongoDB connection
         self.client = MongoClient(mongo_uri)
@@ -1086,7 +1097,7 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         batch_rho: np.ndarray,
         batch_pi: np.ndarray,
     ) -> None:
-        self._online_update_T(task_mapping, class_mapping, batch_T)
+        self._online_update_T(task_mapping, class_mapping, batch_T, self.top_k)
         self._online_update_rho(class_mapping, batch_rho)
         self._online_update_pi(worker_mapping, class_mapping, batch_pi)
 
@@ -1096,60 +1107,76 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         task_mapping: TaskMapping,
         class_mapping: ClassMapping,
         batch_T: sp.COO,
+        top_k: int | None = None,
     ) -> None:
+        """
+        If top_k is None -> keep all classes (old behavior).
+        If top_k is set   -> keep only top_k classes per task.
+        """
         scale = 1 - self.gamma
 
-        # Precompute fast integer→name lookups
-        id_to_task = {v: k for k, v in task_mapping.items()}
-        id_to_class = {v: k for k, v in class_mapping.items()}
-
-        # Extract coords & apply gamma once
         row_idx, col_idx = batch_T.coords
         data = batch_T.data * self.gamma
 
-        # Aggregate by (task_id, class_id) using vectorized add
-        pairs = np.stack([row_idx, col_idx], axis=1)
-        uniq_pairs, inverse = np.unique(pairs, axis=0, return_inverse=True)
-        delta_sums = np.zeros(len(uniq_pairs), dtype=float)
-        np.add.at(delta_sums, inverse, data)
+        task_deltas = defaultdict(lambda: defaultdict(float))
+        for t, c, d in zip(row_idx, col_idx, data):
+            if d == 0.0:
+                continue
+            task_deltas[t][c] += d
 
-        # Unique task IDs for DB fetch
-        uniq_task_ids = np.unique(uniq_pairs[:, 0])
-        task_list = [id_to_task[t] for t in uniq_task_ids]
+        task_list = [self._reverse_task_mapping[t] for t in task_deltas.keys()]
 
-        # Fetch existing probs for these tasks
         docs = self.db.task_class_probs.find(
             {"_id": {"$in": task_list}},
             {"_id": 1, "probs": 1},
         )
         task_to_probs = {doc["_id"]: doc.get("probs", {}) for doc in docs}
 
-        # Prepare updates (integer → string mapping only once)
-        updates_by_task = defaultdict(dict)
-        for (task_id, class_id), delta in zip(uniq_pairs, delta_sums):
-            task_name = id_to_task[task_id]
-            class_name = id_to_class[class_id]
-            old_val = task_to_probs.get(task_name, {}).get(class_name, 0.0)
-            new_val = old_val * scale + delta
-            field_key = f"probs.{class_name}"
-            if new_val != 0.0:
-                updates_by_task[task_name][field_key] = new_val
-            else:
-                updates_by_task[task_name][field_key] = None
-
-        # Build bulk update operations
         updates = []
-        for task_name, fields in updates_by_task.items():
-            set_fields = {k: v for k, v in fields.items() if v is not None}
-            unset_fields = {k: "" for k, v in fields.items() if v is None}
+        for task_id, class_deltas in task_deltas.items():
+            task_name = self._reverse_task_mapping[task_id]
+            current_probs = task_to_probs.get(task_name, {})
+
+            merged: dict[str, float] = {
+                cls: val * scale for cls, val in current_probs.items()
+            }
+
+            for cls_id, delta in class_deltas.items():
+                cls_name = self._reverse_class_mapping[cls_id]
+                merged[cls_name] = merged.get(cls_name, 0.0) + delta
+
+            if top_k is not None and len(merged) > top_k:
+                merged = dict(
+                    nlargest(top_k, merged.items(), key=lambda kv: kv[1]),
+                )
+
+            # $set fields (cast to plain float to avoid np.float64)
+            set_fields = {
+                f"probs.{cls}": float(val) for cls, val in merged.items()
+            }
+
             pipeline = []
             if set_fields:
                 pipeline.append({"$set": set_fields})
-            if unset_fields:
-                pipeline.append({"$unset": unset_fields})
-            updates.append(
-                UpdateOne({"_id": task_name}, pipeline, upsert=True),
-            )
+
+            # Only compute $unset when top_k is set
+            if top_k is not None:
+                delta_class_names = {
+                    self._reverse_class_mapping[cid]
+                    for cid in class_deltas.keys()
+                }
+                existing_names = set(current_probs.keys()) | delta_class_names
+                keep_names = set(merged.keys())
+                unset = [
+                    f"probs.{cls}" for cls in (existing_names - keep_names)
+                ]
+                if unset:
+                    pipeline.append({"$unset": unset})
+
+            if pipeline:
+                updates.append(
+                    UpdateOne({"_id": task_name}, pipeline, upsert=True),
+                )
 
         # Write + normalize
         if updates:
@@ -1295,139 +1322,3 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         batch_T: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         pass
-
-
-class SparseMongoOnlineAlgorithmTUpdate(SparseMongoOnlineAlgorithm):
-    @profile
-    def _online_update_T(
-        self,
-        task_mapping: dict[str, int],
-        class_mapping: dict[str, int],
-        batch_T: sp.COO,
-    ) -> None:
-        """Fast online update of T with sparse input."""
-        if not task_mapping or not class_mapping:
-            return
-
-        scale = 1 - self.gamma
-        # Extract coords & apply gamma once
-        row_idx, col_idx = batch_T.coords
-        data = batch_T.data * self.gamma
-
-        # Aggregate by (task_id, class_id) using vectorized add
-        pairs = np.stack([row_idx, col_idx], axis=1)
-        uniq_pairs, inverse = np.unique(pairs, axis=0, return_inverse=True)
-        delta_sums = np.zeros(len(uniq_pairs), dtype=float)
-        np.add.at(delta_sums, inverse, data)
-
-        if len(uniq_pairs) == 0:
-            return  # no updates needed
-
-        task_list = list(task_mapping.keys())
-
-        # Fetch existing probs for these tasks
-        docs = list(
-            self.db.task_class_probs.find(
-                {"_id": {"$in": task_list}},
-                {"_id": 1, "probs": 1},
-            ),
-        )
-
-        # Precompute field keys by class_id
-        field_keys = {}
-        reverse_class_map = self._reverse_class_mapping
-        for class_id, class_name in reverse_class_map.items():
-            field_keys[class_id] = f"probs.{class_name}"
-
-        # Determine if we can use the matrix approach
-        max_task_id = max(task_mapping.values(), default=0)
-        max_class_id = max(class_mapping.values(), default=0)
-        matrix_size = (max_task_id + 1) * (max_class_id + 1)
-        is_matrix_feasible = (
-            matrix_size < 1e6
-        )  # arbitrary threshold of 1 million elements
-
-        if is_matrix_feasible:
-            # Use matrix approach
-            old_vals_matrix = np.zeros(
-                (max_task_id + 1, max_class_id + 1),
-                dtype=float,
-            )
-            for doc in docs:
-                task_name = doc["_id"]
-                task_id = task_mapping.get(task_name, -1)
-                if task_id == -1:
-                    continue
-                probs = doc.get("probs", {})
-                for class_name, prob in probs.items():
-                    class_id = class_mapping.get(class_name, -1)
-                    if class_id != -1:
-                        old_vals_matrix[task_id, class_id] = prob
-
-            task_ids = uniq_pairs[:, 0]
-            class_ids = uniq_pairs[:, 1]
-            old_vals = old_vals_matrix[task_ids, class_ids]
-            new_vals = old_vals * scale + delta_sums
-        else:
-            # Use dictionary approach with id-based keys
-            old_probs_by_ids = {}
-            for doc in docs:
-                task_name = doc["_id"]
-                task_id = task_mapping.get(task_name, -1)
-                if task_id == -1:
-                    continue
-                probs = doc.get("probs", {})
-                for class_name, prob in probs.items():
-                    class_id = class_mapping.get(class_name, -1)
-                    if class_id != -1:
-                        old_probs_by_ids[(task_id, class_id)] = prob
-
-        # Prepare updates using a list of tuples for efficiency
-        update_tuples = []
-        reverse_task_map = self._reverse_task_mapping
-
-        if is_matrix_feasible:
-            for idx in range(len(uniq_pairs)):
-                task_id, class_id = uniq_pairs[idx]
-                new_val = new_vals[idx]
-                task_name = reverse_task_map[task_id]
-                field_key = field_keys[class_id]
-                if new_val != 0.0:
-                    update_tuples.append((task_name, field_key, new_val))
-                else:
-                    update_tuples.append((task_name, field_key, None))
-        else:
-            for idx, (task_id, class_id) in enumerate(uniq_pairs):
-                old_val = old_probs_by_ids.get((task_id, class_id), 0.0)
-                new_val = old_val * scale + delta_sums[idx]
-                task_name = reverse_task_map[task_id]
-                field_key = field_keys[class_id]
-                if new_val != 0.0:
-                    update_tuples.append((task_name, field_key, new_val))
-                else:
-                    update_tuples.append((task_name, field_key, None))
-
-        # Build updates_by_task from update_tuples
-        updates_by_task = defaultdict(dict)
-        for task_name, field_key, val in update_tuples:
-            updates_by_task[task_name][field_key] = val
-
-        # Build bulk update operations
-        updates = []
-        for task_name, fields in updates_by_task.items():
-            set_fields = {k: v for k, v in fields.items() if v is not None}
-            unset_fields = {k: "" for k, v in fields.items() if v is None}
-            update_ops = []
-            if set_fields:
-                update_ops.append({"$set": set_fields})
-            if unset_fields:
-                update_ops.append({"$unset": unset_fields})
-            if update_ops:
-                updates.append(
-                    UpdateOne({"_id": task_name}, update_ops, upsert=True),
-                )
-
-        # Write + normalize
-        if updates:
-            self.db.task_class_probs.bulk_write(updates, ordered=False)
-            self._normalize_probs(task_list)
