@@ -217,16 +217,21 @@ class MongoOnlineAlgorithm(ABC):
         class_mapping: ClassMapping,
     ) -> None:
         """Updates the provided mappings in-place."""
-
         for task_id, worker_class in batch.items():
-            if str(task_id) not in task_mapping:
-                task_mapping[str(task_id)] = len(task_mapping)
+            # Remove trailing periods from task_id
+            task_id = str(task_id).rstrip(".")
+            if task_id not in task_mapping:
+                task_mapping[task_id] = len(task_mapping)
 
             for worker_id, class_id in worker_class.items():
-                if str(worker_id) not in worker_mapping:
-                    worker_mapping[str(worker_id)] = len(worker_mapping)
-                if str(class_id) not in class_mapping:
-                    class_mapping[str(class_id)] = len(class_mapping)
+                # Remove trailing periods from worker_id and class_id
+                worker_id = str(worker_id).rstrip(".")
+                class_id = str(class_id).rstrip(".")
+
+                if worker_id not in worker_mapping:
+                    worker_mapping[worker_id] = len(worker_mapping)
+                if class_id not in class_mapping:
+                    class_mapping[class_id] = len(class_mapping)
 
         self._reverse_task_mapping = {v: k for k, v in task_mapping.items()}
         self._reverse_worker_mapping = {
@@ -253,11 +258,18 @@ class MongoOnlineAlgorithm(ABC):
         )
 
         for task_id, worker_class in batch.items():
+            # Remove trailing periods from task_id
+            task_id = str(task_id).rstrip(".")
             for worker_id, class_id in worker_class.items():
-                task_index = task_mapping[str(task_id)]
-                user_index = worker_mapping[str(worker_id)]
-                label_index = class_mapping[str(class_id)]
+                # Remove trailing periods from worker_id and class_id
+                worker_id = str(worker_id).rstrip(".")
+                class_id = str(class_id).rstrip(".")
+
+                task_index = task_mapping[task_id]
+                user_index = worker_mapping[worker_id]
+                label_index = class_mapping[class_id]
                 batch_matrix[task_index, user_index, label_index] = True
+
         return batch_matrix
 
     def _init_T(
@@ -865,16 +877,21 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         class_mapping: ClassMapping,
     ) -> None:
         """Updates the provided mappings in-place."""
-
         for task_id, worker_class in batch.items():
-            if str(task_id) not in task_mapping:
-                task_mapping[str(task_id)] = len(task_mapping)
+            # Remove trailing periods from task_id
+            task_id = str(task_id).rstrip(".")
+            if task_id not in task_mapping:
+                task_mapping[task_id] = len(task_mapping)
 
             for worker_id, class_id in worker_class.items():
-                if str(worker_id) not in worker_mapping:
-                    worker_mapping[str(worker_id)] = len(worker_mapping)
-                if str(class_id) not in class_mapping:
-                    class_mapping[str(class_id)] = len(class_mapping)
+                # Remove trailing periods from worker_id and class_id
+                worker_id = str(worker_id).rstrip(".")
+                class_id = str(class_id).rstrip(".")
+
+                if worker_id not in worker_mapping:
+                    worker_mapping[worker_id] = len(worker_mapping)
+                if class_id not in class_mapping:
+                    class_mapping[class_id] = len(class_mapping)
 
         self._reverse_task_mapping = {v: k for k, v in task_mapping.items()}
         self._reverse_worker_mapping = {
@@ -895,10 +912,16 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         coords = [[], [], []]  # [task_indices, worker_indices, class_indices]
 
         for task_id, worker_class in batch.items():
+            # Remove trailing periods from task_id
+            task_id = str(task_id).rstrip(".")
             for worker_id, class_id in worker_class.items():
-                task_index = task_mapping[str(task_id)]
-                worker_index = worker_mapping[str(worker_id)]
-                class_index = class_mapping[str(class_id)]
+                # Remove trailing periods from worker_id and class_id
+                worker_id = str(worker_id).rstrip(".")
+                class_id = str(class_id).rstrip(".")
+
+                task_index = task_mapping[task_id]
+                worker_index = worker_mapping[worker_id]
+                class_index = class_mapping[class_id]
 
                 coords[0].append(task_index)
                 coords[1].append(worker_index)
