@@ -76,6 +76,30 @@ class PooledFlatSingleBinomial(DawidSkene):
 
                 T[i, l] = np.prod(np.power(p_lk, n_i_k)) * self.rho[l]
 
-        # Normalize
         self.denom_e_step = T.sum(axis=1, keepdims=True)
         self.T = np.where(self.denom_e_step > 0, T / self.denom_e_step, T)
+
+
+class VectorizedPooledFlatSingleBinomial(PooledFlatSingleBinomial):
+    def _e_step(self) -> None:
+        denom = 1 - self.rho  # shape (K,)
+        p_lk = ((1 - self.alpha) * self.rho[None, :]) / denom[
+            :,
+            None,
+        ]  # shape (K, K)
+
+        np.fill_diagonal(p_lk, self.alpha)
+        # n_i_k: (n_task, n_classes) -> (n_task, 1, n_classes)
+        # p_lk: (K, K) -> (1, K, K)
+        powers = np.power(
+            p_lk[None, :, :],
+            self.n_il[:, None, :],
+        )  # shape (n_task, K, K)
+
+        T = np.prod(powers, axis=2)  # shape (n_task, K)
+
+        T *= self.rho[None, :]  # shape (n_task, K)
+
+        self.denom_e_step = T.sum(axis=1, keepdims=True)
+        self.T = np.where(self.denom_e_step > 0, T / self.denom_e_step, T)
+        print(f"{self.T=}")
