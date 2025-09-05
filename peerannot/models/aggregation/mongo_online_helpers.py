@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import warnings
 from abc import ABC, abstractmethod
-from collections import defaultdict
-from heapq import nlargest
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -239,6 +237,7 @@ class MongoOnlineAlgorithm(ABC):
         }
         self._reverse_class_mapping = {v: k for k, v in class_mapping.items()}
 
+    @profile
     def _process_batch_to_matrix(
         self,
         batch: AnswersDict,
@@ -726,6 +725,20 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         self.worker_mapping = self.db.get_collection("worker_mapping")
         self.class_mapping = self.db.get_collection("class_mapping")
 
+    @staticmethod
+    def _escape_id(id_str: str) -> str:
+        """Escape dots in ID strings to avoid MongoDB field path issues."""
+        if isinstance(id_str, str):
+            return id_str.replace(".", "__DOT__")
+        return str(id_str)
+
+    @staticmethod
+    def _unescape_id(escaped_id: str) -> str:
+        """Unescape dots in ID strings."""
+        if isinstance(escaped_id, str):
+            return escaped_id.replace("__DOT__", ".")
+        return str(escaped_id)
+
     @property
     def n_classes(self) -> int:
         return self.class_mapping.count_documents({})
@@ -852,7 +865,6 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
     def get_or_create_indices(self, collection, keys: list[Hashable]) -> dict:
         existing_docs = collection.find({"_id": {"$in": keys}})
         existing_map = {doc["_id"]: doc["index"] for doc in existing_docs}
-
         new_keys = [k for k in keys if k not in existing_map]
 
         if new_keys:
@@ -879,14 +891,15 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         """Updates the provided mappings in-place."""
         for task_id, worker_class in batch.items():
             # Remove trailing periods from task_id
-            task_id = str(task_id).rstrip(".")
+            task_id = self._escape_id(str(task_id))
+
             if task_id not in task_mapping:
                 task_mapping[task_id] = len(task_mapping)
 
             for worker_id, class_id in worker_class.items():
                 # Remove trailing periods from worker_id and class_id
-                worker_id = str(worker_id).rstrip(".")
-                class_id = str(class_id).rstrip(".")
+                worker_id = self._escape_id(str(worker_id))
+                class_id = self._escape_id(str(class_id))
 
                 if worker_id not in worker_mapping:
                     worker_mapping[worker_id] = len(worker_mapping)
@@ -913,11 +926,11 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
 
         for task_id, worker_class in batch.items():
             # Remove trailing periods from task_id
-            task_id = str(task_id).rstrip(".")
+            task_id = self._escape_id(str(task_id))
             for worker_id, class_id in worker_class.items():
                 # Remove trailing periods from worker_id and class_id
-                worker_id = str(worker_id).rstrip(".")
-                class_id = str(class_id).rstrip(".")
+                worker_id = self._escape_id(str(worker_id))
+                class_id = self._escape_id(str(class_id))
 
                 task_index = task_mapping[task_id]
                 worker_index = worker_mapping[worker_id]
@@ -1141,70 +1154,76 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         row_idx, col_idx = batch_T.coords
         data = batch_T.data * self.gamma
 
-        task_deltas = defaultdict(lambda: defaultdict(float))
-        for t, c, d in zip(row_idx, col_idx, data):
-            if d == 0.0:
-                continue
-            task_deltas[t][c] += d
+        uniq_tasks = np.unique(row_idx)
+        uniq_classes = np.unique(col_idx)
 
-        task_list = [self._reverse_task_mapping[t] for t in task_deltas.keys()]
+        task_idx = np.searchsorted(uniq_tasks, row_idx)
+        class_idx = np.searchsorted(uniq_classes, col_idx)
+        block = np.zeros(
+            (len(uniq_tasks), len(uniq_classes)),
+            dtype=np.float64,
+        )
+        np.add.at(block, (task_idx, class_idx), data)
+
+        task_names = np.array(
+            [self._reverse_task_mapping[t] for t in uniq_tasks],
+        )
+        class_names = np.array(
+            [self._reverse_class_mapping[c] for c in uniq_classes],
+        )
+        class_to_idx = {cls: i for i, cls in enumerate(class_names)}
 
         docs = self.db.task_class_probs.find(
-            {"_id": {"$in": task_list}},
+            {"_id": {"$in": task_names.tolist()}},
             {"_id": 1, "probs": 1},
         )
         task_to_probs = {doc["_id"]: doc.get("probs", {}) for doc in docs}
 
-        updates = []
-        for task_id, class_deltas in task_deltas.items():
-            task_name = self._reverse_task_mapping[task_id]
+        existing = np.zeros_like(block)
+        for i, task_name in enumerate(task_names):
             current_probs = task_to_probs.get(task_name, {})
+            for cls, val in current_probs.items():
+                j = class_to_idx.get(cls)
+                if j is not None:
+                    existing[i, j] = val * scale
 
-            merged: dict[str, float] = {
-                cls: val * scale for cls, val in current_probs.items()
+        probs_matrix = existing + block
+
+        if top_k is not None and top_k < probs_matrix.shape[1]:
+            idx = np.argpartition(probs_matrix, -top_k, axis=1)[:, -top_k:]
+            mask = np.zeros_like(probs_matrix, dtype=bool)
+            rows = np.arange(len(uniq_tasks))[:, None]
+            mask[rows, idx] = True
+            probs_matrix[~mask] = 0.0
+
+        updates = []
+        for i, task_name in enumerate(task_names):
+            row = probs_matrix[i]
+            nz = row.nonzero()[0]
+            if nz.size == 0:
+                continue
+
+            merged = {class_names[j]: float(row[j]) for j in nz}
+            update_doc = {
+                "$set": {f"probs.{cls}": val for cls, val in merged.items()},
             }
 
-            for cls_id, delta in class_deltas.items():
-                cls_name = self._reverse_class_mapping[cls_id]
-                merged[cls_name] = merged.get(cls_name, 0.0) + delta
-
-            if top_k is not None and len(merged) > top_k:
-                merged = dict(
-                    nlargest(top_k, merged.items(), key=lambda kv: kv[1]),
-                )
-
-            # $set fields (cast to plain float to avoid np.float64)
-            set_fields = {
-                f"probs.{cls}": float(val) for cls, val in merged.items()
-            }
-
-            pipeline = []
-            if set_fields:
-                pipeline.append({"$set": set_fields})
-
-            # Only compute $unset when top_k is set
             if top_k is not None:
-                delta_class_names = {
-                    self._reverse_class_mapping[cid]
-                    for cid in class_deltas.keys()
-                }
-                existing_names = set(current_probs.keys()) | delta_class_names
-                keep_names = set(merged.keys())
-                unset = [
-                    f"probs.{cls}" for cls in (existing_names - keep_names)
-                ]
-                if unset:
-                    pipeline.append({"$unset": unset})
+                existing_names = set(task_to_probs.get(task_name, {}).keys())
+                touched_names = set(class_names[block[i, :] > 0])
+                unset_names = (existing_names | touched_names) - merged.keys()
+                if unset_names:
+                    update_doc["$unset"] = {
+                        f"probs.{cls}": "" for cls in unset_names
+                    }
 
-            if pipeline:
-                updates.append(
-                    UpdateOne({"_id": task_name}, pipeline, upsert=True),
-                )
+            updates.append(
+                UpdateOne({"_id": task_name}, update_doc, upsert=True),
+            )
 
-        # Write + normalize
         if updates:
             self.db.task_class_probs.bulk_write(updates, ordered=False)
-            self._normalize_probs(task_list)
+            self._normalize_probs(task_names.tolist())
 
     @profile
     def _online_update_rho(
