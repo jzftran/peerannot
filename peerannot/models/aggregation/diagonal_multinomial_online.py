@@ -173,72 +173,107 @@ class VectorizedDiagonalMultinomialOnlineMongo(
         self,
         worker_mapping: WorkerMapping,
         class_mapping: ClassMapping,
-        batch_pi: np.ndarray,
+        batch_pi: sp.COO,
     ) -> None:
-        gamma = self.gamma
-        worker_ids = list(worker_mapping.keys())
+        """
+        vectorized update of worker confusion matrices using sparse COO arrays.
 
-        batch_to_global = {
-            batch_idx: class_mapping[class_name]
-            for class_name, batch_idx in class_mapping.items()
-        }
+        Arguments:
+            worker_mapping: dict mapping worker_id -> batch row index
+            class_mapping: dict mapping class_name -> global class_id
+            batch_pi: sparse.COO of shape (n_workers, n_classes)
+        """
+
+        worker_ids = list(worker_mapping.keys())
+        n_workers, n_classes = batch_pi.shape
+
+        worker_idx_map = {wid: i for i, wid in enumerate(worker_ids)}
+        global_class_ids = np.fromiter(
+            self._reverse_class_mapping.keys(),
+            dtype=int,
+        )
+        batch_class_indices = np.arange(len(global_class_ids), dtype=int)
+
+        batch_worker_indices = np.fromiter(
+            worker_mapping.values(),
+            dtype=int,
+        )
+
+        conf_matrix = np.zeros((n_workers, n_classes), dtype=np.float64)
 
         worker_docs = self.db.worker_confusion_matrices.find(
             {"_id": {"$in": worker_ids}},
         )
-        worker_confusions = {
-            doc["_id"]: doc.get("confusion_matrix", []) for doc in worker_docs
-        }
+        for doc in worker_docs:
+            wid = doc["_id"]
+            i = worker_idx_map[wid]
+            for entry in doc.get("confusion_matrix", []):
+                conf_matrix[i, entry["class_id"]] = entry["prob"]
+
+        coords = batch_pi.coords  # shape (2, nnz)
+        data = batch_pi.data
+
+        row_map = {w: i for i, w in enumerate(batch_worker_indices)}
+        col_map = {c: j for j, c in enumerate(batch_class_indices)}
+
+        mask = np.isin(coords[0], batch_worker_indices) & np.isin(
+            coords[1],
+            batch_class_indices,
+        )
+        sub_rows = coords[0, mask]
+        sub_cols = coords[1, mask]
+        sub_data = data[mask]
+
+        rows = np.fromiter(
+            (row_map[r] for r in sub_rows),
+            dtype=int,
+            count=len(sub_rows),
+        )
+        cols = np.fromiter(
+            (col_map[c] for c in sub_cols),
+            dtype=int,
+            count=len(sub_cols),
+        )
+
+        batch_probs = np.zeros(
+            (n_workers, len(batch_class_indices)),
+            dtype=sub_data.dtype,
+        )
+        batch_probs[rows, cols] = sub_data
+
+        conf_matrix[:, global_class_ids] = (1 - self.gamma) * conf_matrix[
+            :,
+            global_class_ids,
+        ] + self.gamma * batch_probs
+
+        row_idx, col_idx = np.nonzero(conf_matrix)
+        probs = conf_matrix[row_idx, col_idx]
+
+        # group by row (worker index)
+        order = np.argsort(row_idx)
+        row_idx, col_idx, probs = row_idx[order], col_idx[order], probs[order]
+
+        unique_rows, start_idx, counts = np.unique(
+            row_idx,
+            return_index=True,
+            return_counts=True,
+        )
 
         updates = []
+        for r, start, count in zip(unique_rows, start_idx, counts):
+            wid = worker_ids[r]
+            cids = col_idx[start : start + count]
+            vals = probs[start : start + count]
 
-        for worker_id, batch_worker_idx in worker_mapping.items():
-            existing_matrix = worker_confusions.get(worker_id, [])
-
-            entry_map = {
-                entry["class_id"]: entry
-                for entry in existing_matrix
-                if "class_id" in entry
-            }
-
-            updated_entries = {}
-
-            for batch_class_idx, global_class_id in batch_to_global.items():
-                prob = float(batch_pi[batch_worker_idx, batch_class_idx])
-                if prob == 0:
-                    continue
-
-                if global_class_id in entry_map:
-                    old_prob = entry_map[global_class_id]["prob"]
-                    new_prob = (1 - gamma) * old_prob + gamma * prob
-                else:
-                    new_prob = gamma * prob
-
-                updated_entries[global_class_id] = new_prob
-
-            if not updated_entries:
-                continue
-
-            new_confusion_matrix = []
-
-            seen = set(updated_entries.keys())
-            for class_id, prob in updated_entries.items():
-                new_confusion_matrix.append(
-                    {
-                        "class_id": class_id,
-                        "prob": prob,
-                    },
-                )
-
-            for entry in existing_matrix:
-                cid = entry["class_id"]
-                if cid not in seen:
-                    new_confusion_matrix.append(entry)
+            new_conf = [
+                {"class_id": int(cid), "prob": float(p)}
+                for cid, p in zip(cids, vals, strict=True)
+            ]
 
             updates.append(
                 UpdateOne(
-                    {"_id": worker_id},
-                    {"$set": {"confusion_matrix": new_confusion_matrix}},
+                    {"_id": wid},
+                    {"$set": {"confusion_matrix": new_conf}},
                     upsert=True,
                 ),
             )
