@@ -1,6 +1,7 @@
 # %%
 import numpy as np
 import sparse as sp
+from line_profiler import profile
 from pydantic import validate_call
 
 from peerannot.models.aggregation.online_helpers import OnlineAlgorithm
@@ -60,7 +61,6 @@ class PooledFlatSingleBinomialOnline(OnlineAlgorithm):
 
         batch_n_task, batch_n_classes = batch_n_il.shape
         batch_T = np.zeros((batch_n_task, batch_n_classes))
-        print(f"{batch_pi=}")
         for i in range(batch_n_task):
             n_i_k = batch_n_il[i]  # shape (K,)
 
@@ -70,10 +70,6 @@ class PooledFlatSingleBinomialOnline(OnlineAlgorithm):
 
                 batch_T[i, l] = np.prod(np.power(p_lk, n_i_k)) * batch_rho[l]
 
-        print(f"{p_lk=}")
-        # Normalize
-        T = batch_T
-        print(f"{T=}")
         batch_denom_e_step = batch_T.sum(axis=1, keepdims=True)
         batch_T = np.where(
             batch_denom_e_step > 0,
@@ -100,6 +96,7 @@ class VectorizedPooledFlatSingleBinomialOnlineMongo(
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
+    @profile
     def _e_step(
         self,
         batch_matrix: sp.COO,

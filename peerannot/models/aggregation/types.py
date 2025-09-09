@@ -1,6 +1,7 @@
 from collections.abc import Generator, Hashable
 from os import PathLike
 
+# mapping represents name to index mapping
 type Mapping = dict[str, int]
 type WorkerMapping = Mapping
 type TaskMapping = Mapping

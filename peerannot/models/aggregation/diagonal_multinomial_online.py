@@ -183,7 +183,6 @@ class VectorizedDiagonalMultinomialOnlineMongo(
             class_mapping: dict mapping class_name -> global class_id
             batch_pi: sparse.COO of shape (n_workers, n_classes)
         """
-
         worker_ids = list(worker_mapping.keys())
         n_workers, n_classes = batch_pi.shape
 
@@ -199,16 +198,24 @@ class VectorizedDiagonalMultinomialOnlineMongo(
             dtype=int,
         )
 
-        conf_matrix = np.zeros((n_workers, n_classes), dtype=np.float64)
+        conf_matrix = np.zeros(
+            (n_workers, len(self._reverse_class_mapping)),
+            dtype=np.float64,
+        )
+
+        proj = {f"confusion_matrix.{cls}": 1 for cls in class_mapping.keys()}
 
         worker_docs = self.db.worker_confusion_matrices.find(
             {"_id": {"$in": worker_ids}},
+            projection=proj,
         )
         for doc in worker_docs:
             wid = doc["_id"]
             i = worker_idx_map[wid]
-            for entry in doc.get("confusion_matrix", []):
-                conf_matrix[i, entry["class_id"]] = entry["prob"]
+            conf_dict = doc.get("confusion_matrix", {})
+            for cls_name, prob in conf_dict.items():
+                cid = class_mapping.get(cls_name)
+                conf_matrix[i, cid] = prob
 
         coords = batch_pi.coords  # shape (2, nnz)
         data = batch_pi.data
@@ -249,7 +256,6 @@ class VectorizedDiagonalMultinomialOnlineMongo(
         row_idx, col_idx = np.nonzero(conf_matrix)
         probs = conf_matrix[row_idx, col_idx]
 
-        # group by row (worker index)
         order = np.argsort(row_idx)
         row_idx, col_idx, probs = row_idx[order], col_idx[order], probs[order]
 
@@ -265,10 +271,10 @@ class VectorizedDiagonalMultinomialOnlineMongo(
             cids = col_idx[start : start + count]
             vals = probs[start : start + count]
 
-            new_conf = [
-                {"class_id": int(cid), "prob": float(p)}
+            new_conf = {
+                self._reverse_class_mapping[int(cid)]: float(p)
                 for cid, p in zip(cids, vals, strict=True)
-            ]
+            }
 
             updates.append(
                 UpdateOne(

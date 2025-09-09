@@ -173,9 +173,10 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
                 {"_id": {"$in": list(class_mapping.keys())}},
             ),
         )
+
         # Create a mapping from batch class indices to global class indices
-        batch_to_global = {
-            class_mapping[doc["_id"]]: doc["index"] for doc in class_docs
+        batch_idx_to_name = {
+            class_mapping[doc["_id"]]: doc["_id"] for doc in class_docs
         }
 
         # Fetch the pooled confusion matrix
@@ -183,31 +184,16 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
             {"_id": "pooledDiagonalMultinomial"},
         )
         confusion_matrix = (
-            pooled_doc.get("confusion_matrix", []) if pooled_doc else []
+            pooled_doc.get("confusion_matrix", {}) if pooled_doc else {}
         )
-        entry_map = {
-            entry["class_id"]: entry
-            for entry in confusion_matrix
-            if "class_id" in entry
-        }
 
         # Update the confusion matrix entries
-        for i_batch, i_global in batch_to_global.items():
+        for i_batch, class_name in batch_idx_to_name.items():
             batch_prob = batch_pi[i_batch]
-            if i_global in entry_map:
-                entry = entry_map[i_global]
-                entry["prob"] = (1 - self.gamma) * entry[
-                    "prob"
-                ] + self.gamma * batch_prob
-            else:
-                if batch_prob == 0:
-                    continue
-                entry = {
-                    "class_id": i_global,
-                    "prob": self.gamma * batch_prob,
-                }
-                confusion_matrix.append(entry)
-                entry_map[i_global] = entry
+            old_prob = confusion_matrix.get(class_name, 0.0)
+            confusion_matrix[class_name] = float(
+                (1 - self.gamma) * old_prob + self.gamma * batch_prob,
+            )
 
         # Update the confusion matrix in the database
         self.db.worker_confusion_matrices.update_one(
