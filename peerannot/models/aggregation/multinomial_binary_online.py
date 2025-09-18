@@ -243,3 +243,7 @@ class VectorizedMultinomialBinaryOnlineMongo(
         batch_T = np.where(denom > 0, T / denom, T)
 
         return batch_T, denom
+
+    @property
+    def pi(self) -> np.ndarray:
+        raise NotImplementedError

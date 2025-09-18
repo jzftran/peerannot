@@ -102,6 +102,10 @@ class PooledDiagonalMultinomialOnline(OnlineAlgorithm):
 
         return batch_T, batch_denom_e_step
 
+    @property
+    def pi(self) -> np.ndarray:
+        raise NotImplementedError
+
 
 class VectorizedPooledDiagonalMultinomialOnlineMongo(
     SparseMongoOnlineAlgorithm,
@@ -254,3 +258,7 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
         )
 
         return batch_T, batch_denom_e_step
+
+    @property
+    def pi(self) -> np.ndarray:
+        raise NotImplementedError

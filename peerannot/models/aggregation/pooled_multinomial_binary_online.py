@@ -174,6 +174,10 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
             upsert=True,
         )
 
+    @property
+    def pi(self) -> np.ndarray:
+        raise NotImplementedError
+
     @profile
     def _e_step(
         self,

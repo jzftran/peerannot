@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import time
 import warnings
 from abc import ABC, abstractmethod
+from datetime import UTC, datetime
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -13,6 +15,10 @@ from annotated_types import Ge, Gt
 from line_profiler import profile
 from pymongo import MongoClient, UpdateOne
 
+from peerannot.helpers.logging import OnlineMongoLoggingMixin
+from peerannot.models.aggregation.online_helpers import (
+    validate_recursion_limit,
+)
 from peerannot.models.aggregation.warnings_errors import (
     DidNotConverge,
     NotInitialized,
@@ -29,7 +35,14 @@ if TYPE_CHECKING:
     from peerannot.models.template import AnswersDict
 
 
-class MongoOnlineAlgorithm(ABC):
+def apply_func_recursive(d, func):
+    if isinstance(d, dict):
+        return {func(k): apply_func_recursive(v, func) for k, v in d.items()}
+    return func(d)
+
+
+# %%
+class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
     """Batch EM is the same as in OnlineAlgorithm.
     Global rho, pi and T are stored sparsly in MongoDB.
     used in class SparseMongoOnlineAlgorithm"""
@@ -40,7 +53,6 @@ class MongoOnlineAlgorithm(ABC):
         decay: Annotated[float, Gt(0)] = 0.6,
         mongo_uri: str = "mongodb://localhost:27017/",
         top_k: Annotated[int, Gt(0)] | None = None,
-        # mongo_db_name: str = "online_algorithm",
     ) -> None:
         self.gamma0 = gamma0
         self.decay = decay
@@ -59,6 +71,7 @@ class MongoOnlineAlgorithm(ABC):
             "task_mapping",
             "worker_mapping",
             "class_mapping",
+            "user_votes",
         ]
         for coll_name in collections:
             if coll_name not in self.db.list_collection_names():
@@ -67,6 +80,43 @@ class MongoOnlineAlgorithm(ABC):
         self.task_mapping = self.db.get_collection("task_mapping")
         self.worker_mapping = self.db.get_collection("worker_mapping")
         self.class_mapping = self.db.get_collection("class_mapping")
+
+    @profile
+    def insert_batch(self, batch: AnswersDict):
+        """
+        Insert or update a batch of votes using bulk_write.
+        """
+        operations = []
+
+        for task_id, user_votes in batch.items():
+            update_fields = {
+                f"votes.{user_id}": vote
+                for user_id, vote in user_votes.items()
+            }
+            operations.append(
+                UpdateOne(
+                    {"_id": task_id},
+                    {"$set": update_fields},
+                    upsert=True,
+                ),
+            )
+
+        if operations:  # only write if there are updates
+            self.db.user_votes.bulk_write(operations, ordered=False)
+
+    @staticmethod
+    def _escape_id(id_str: str) -> str:
+        """Escape dots in ID strings to avoid MongoDB field path issues."""
+        if isinstance(id_str, str):
+            return id_str.replace(".", "__DOT__")
+        return str(id_str)
+
+    @staticmethod
+    def _unescape_id(escaped_id: str) -> str:
+        """Unescape dots in ID strings."""
+        if isinstance(escaped_id, str):
+            return escaped_id.replace("__DOT__", ".")
+        return str(escaped_id)
 
     @property
     def n_classes(self) -> int:
@@ -87,49 +137,6 @@ class MongoOnlineAlgorithm(ABC):
 
     def drop(self):
         self.client.drop_database(self.__class__.__name__)
-
-    def _load_pi_for_worker(self, worker_id: str) -> np.ndarray:
-        doc = self.db.worker_confusion_matrices.find_one({"_id": worker_id})
-        n_classes = self.n_classes
-        confusion_matrix = np.zeros((n_classes, n_classes))
-        if doc is not None and "confusion_matrix" in doc:
-            for entry in doc["confusion_matrix"]:
-                from_idx = entry["from_class_id"]
-                to_idx = entry["to_class_id"]
-                prob = entry["prob"]
-                if from_idx < n_classes and to_idx < n_classes:
-                    confusion_matrix[from_idx, to_idx] = prob
-        return confusion_matrix
-
-    def _update_pi_for_worker_in_mongodb(
-        self,
-        worker_id: int,
-        confusion_matrix: np.ndarray,
-    ) -> None:
-        # Convert the full matrix to sparse list of non-zero entries
-        n_classes = self.n_classes
-        sparse_entries = []
-        for i in range(n_classes):
-            for j in range(n_classes):
-                prob = confusion_matrix[i, j]
-                if prob != 0:  # Only store non-zero entries
-                    sparse_entries.append(
-                        {
-                            "from_class_id": i,
-                            "to_class_id": j,
-                            "prob": prob,
-                        },
-                    )
-        doc = {
-            "_id": worker_id,
-            "confusion_matrix": sparse_entries,
-            "n_classes": self.n_classes,
-        }
-        self.db.worker_confusion_matrices.replace_one(
-            {"_id": worker_id},
-            doc,
-            upsert=True,
-        )
 
     @property
     def T(self) -> np.ndarray:
@@ -181,17 +188,14 @@ class MongoOnlineAlgorithm(ABC):
         return rho
 
     @property
+    @abstractmethod
     def pi(self) -> np.ndarray:
         """Load the entire pi array from MongoDB into a numpy array."""
-        pi = np.zeros((self.n_workers, self.n_classes, self.n_classes))
-        for worker_id in range(self.n_workers):
-            pi[worker_id, :, :] = self._load_pi_for_worker(str(worker_id))
-        return pi
 
+    @profile
     def get_or_create_indices(self, collection, keys: list[Hashable]) -> dict:
         existing_docs = collection.find({"_id": {"$in": keys}})
         existing_map = {doc["_id"]: doc["index"] for doc in existing_docs}
-
         new_keys = [k for k in keys if k not in existing_map]
 
         if new_keys:
@@ -216,16 +220,9 @@ class MongoOnlineAlgorithm(ABC):
     ) -> None:
         """Updates the provided mappings in-place."""
         for task_id, worker_class in batch.items():
-            # Remove trailing periods from task_id
-            task_id = str(task_id).rstrip(".")
             if task_id not in task_mapping:
                 task_mapping[task_id] = len(task_mapping)
-
             for worker_id, class_id in worker_class.items():
-                # Remove trailing periods from worker_id and class_id
-                worker_id = str(worker_id).rstrip(".")
-                class_id = str(class_id).rstrip(".")
-
                 if worker_id not in worker_mapping:
                     worker_mapping[worker_id] = len(worker_mapping)
                 if class_id not in class_mapping:
@@ -257,13 +254,7 @@ class MongoOnlineAlgorithm(ABC):
         )
 
         for task_id, worker_class in batch.items():
-            # Remove trailing periods from task_id
-            task_id = str(task_id).rstrip(".")
             for worker_id, class_id in worker_class.items():
-                # Remove trailing periods from worker_id and class_id
-                worker_id = str(worker_id).rstrip(".")
-                class_id = str(class_id).rstrip(".")
-
                 task_index = task_mapping[task_id]
                 user_index = worker_mapping[worker_id]
                 label_index = class_mapping[class_id]
@@ -322,7 +313,7 @@ class MongoOnlineAlgorithm(ABC):
         map_back = np.vectorize(lambda x: rev_class[x])
         return map_back(np.argmax(T, axis=1))
 
-    def get_answer(self, task_id):
+    def get_answer(self, task_id: Hashable):
         """Get current most likely class for each task. Shouldn't
         be used."""
 
@@ -330,6 +321,7 @@ class MongoOnlineAlgorithm(ABC):
             "current_answer"
         ]
 
+    @profile
     def process_batch(
         self,
         batch: AnswersDict,
@@ -338,7 +330,9 @@ class MongoOnlineAlgorithm(ABC):
     ) -> list[float]:
         """Process a batch with per-batch EM until local convergence."""
         self.t += 1
+        batch = apply_func_recursive(batch, self._escape_id)
 
+        self.insert_batch(batch)
         task_mapping: TaskMapping = {}
         worker_mapping: WorkerMapping = {}
         class_mapping: ClassMapping = {}
@@ -365,20 +359,23 @@ class MongoOnlineAlgorithm(ABC):
             epsilon,
         )
 
+    @profile
     def process_batch_matrix(
         self,
-        batch_matrix: np.ndarray,
+        batch_matrix: np.ndarray | sp.COO,
         task_mapping: TaskMapping,
         worker_mapping: WorkerMapping,
         class_mapping: ClassMapping,
         maxiter: int = 50,
         epsilon: float = 1e-6,
     ) -> list[float]:
+        batch_start = time.perf_counter()
+
         self.get_or_create_indices(self.task_mapping, list(task_mapping))
         self.get_or_create_indices(self.worker_mapping, list(worker_mapping))
         self.get_or_create_indices(self.class_mapping, list(class_mapping))
 
-        return self._em_loop_on_batch(
+        ll = self._em_loop_on_batch(
             batch_matrix,
             task_mapping,
             worker_mapping,
@@ -386,7 +383,21 @@ class MongoOnlineAlgorithm(ABC):
             epsilon,
             maxiter,
         )
+        batch_time = time.perf_counter() - batch_start
 
+        self.log_batch_summary(
+            self.t,
+            len(task_mapping),
+            len(worker_mapping),
+            len(class_mapping),
+            len(ll),
+            batch_time,
+            ll[-1],
+        )
+
+        return ll
+
+    @profile
     def _em_loop_on_batch(
         self,
         batch_matrix: np.ndarray,
@@ -406,18 +417,31 @@ class MongoOnlineAlgorithm(ABC):
         )
 
         while i < maxiter and eps > epsilon:
+            iter_start = time.perf_counter()
+
             batch_rho, batch_pi = self._m_step(batch_matrix, batch_T)
+
             batch_T, batch_denom_e_step = self._e_step(
                 batch_matrix,
                 batch_pi,
                 batch_rho,
             )
-
             likeli = np.log(np.sum(batch_denom_e_step))
             ll.append(likeli)
             if i > 0:
-                eps = np.abs(ll[-1] - ll[-2])
+                eps = np.abs((ll[-1] - ll[-2]) / (np.abs(ll[-2]) + 1e-12))
+
+            iter_time = time.perf_counter() - iter_start
+
+            self.log_em_iter(i, likeli, eps, iter_time)
+
             i += 1
+
+        if eps > epsilon:
+            warnings.warn(
+                DidNotConverge(self.__class__.__name__, eps, epsilon),
+                stacklevel=2,
+            )
 
         # Online updates
         self._online_update(
@@ -431,6 +455,7 @@ class MongoOnlineAlgorithm(ABC):
 
         return ll
 
+    @profile
     def _online_update(
         self,
         task_mapping: TaskMapping,
@@ -509,7 +534,7 @@ class MongoOnlineAlgorithm(ABC):
             )
 
         if updates:
-            self.db.task_class_probs.bulk_write(updates)
+            self.db.task_class_probs.bulk_write(updates, ordered=False)
             self._normalize_probs(list(task_mapping.keys()))
 
     @profile
@@ -545,21 +570,19 @@ class MongoOnlineAlgorithm(ABC):
             )
 
         if updates:
-            self.db.task_class_probs.bulk_write(updates)
+            self.db.task_class_probs.bulk_write(updates, ordered=False)
 
     def _online_update_rho(
         self,
         class_mapping: ClassMapping,
         batch_rho: np.ndarray,
     ) -> None:
-        scale = 1 - self.gamma
-
         self.db.class_priors.update_many(
             {},  # filter: update all documents
             [
                 {
                     "$set": {
-                        "prob": {"$multiply": ["$prob", scale]},
+                        "prob": {"$multiply": ["$prob", (1 - self.gamma)]},
                     },
                 },
             ],
@@ -580,93 +603,16 @@ class MongoOnlineAlgorithm(ABC):
 
         # Bulk write to rho collection
         if ops:
-            self.db.class_priors.bulk_write(ops)
+            self.db.class_priors.bulk_write(ops, ordered=False)
 
+    @abstractmethod
     def _online_update_pi(
         self,
         worker_mapping: WorkerMapping,
         class_mapping: ClassMapping,
         batch_pi: np.ndarray,
     ) -> None:
-        class_docs = self.db.class_mapping.find(
-            {"_id": {"$in": list(class_mapping.keys())}},
-        )
-        batch_to_global = {
-            class_mapping[doc["_id"]]: doc["index"] for doc in class_docs
-        }
-
-        worker_confusions_cursor = self.db.worker_confusion_matrices.find(
-            {"_id": {"$in": list(worker_mapping.keys())}},
-        )
-        worker_confusions = {
-            doc["_id"]: doc.get("confusion_matrix", [])
-            for doc in worker_confusions_cursor
-        }
-        updates = []
-        for worker, batch_worker_idx in worker_mapping.items():
-            confusion_matrix = worker_confusions.get(worker, [])
-
-            entry_map = {
-                (entry["from_class_id"], entry["to_class_id"]): idx
-                for idx, entry in enumerate(confusion_matrix)
-            }
-
-            # Update the confusion matrix with new probabilities
-            for i_batch, i_global in batch_to_global.items():
-                for j_batch, j_global in batch_to_global.items():
-                    batch_prob = batch_pi[batch_worker_idx, i_batch, j_batch]
-                    key = (i_global, j_global)
-
-                    if key in entry_map:
-                        idx = entry_map[key]
-                        confusion_matrix[idx]["prob"] = (
-                            1 - self.gamma
-                        ) * confusion_matrix[idx][
-                            "prob"
-                        ] + self.gamma * batch_prob
-                    else:
-                        if batch_prob == 0:
-                            continue
-                        confusion_matrix.append(
-                            {
-                                "from_class_id": i_global,
-                                "to_class_id": j_global,
-                                "prob": self.gamma * batch_prob,
-                            },
-                        )
-                        entry_map[key] = len(confusion_matrix) - 1
-
-            # Normalize the confusion matrix
-            from_class_ids = set(
-                entry["from_class_id"] for entry in confusion_matrix
-            )
-
-            for from_class_id in from_class_ids:
-                # Filter entries with the current from_class_id
-                entries = [
-                    e
-                    for e in confusion_matrix
-                    if e["from_class_id"] == from_class_id
-                ]
-                if entries:
-                    row_sum = sum(entry["prob"] for entry in entries)
-                    if row_sum > 0:
-                        for entry in entries:
-                            entry["prob"] /= row_sum
-
-            # Save the updated confusion matrix back to MongoDB
-            updates.append(
-                UpdateOne(
-                    {"_id": worker},
-                    {"$set": {"confusion_matrix": confusion_matrix}},
-                    upsert=True,
-                ),
-            )
-        if updates:
-            self.db.worker_confusion_matrices.bulk_write(
-                updates,
-                ordered=False,
-            )
+        "Online update_pi"
 
     @abstractmethod
     def _e_step(
@@ -686,231 +632,16 @@ class MongoOnlineAlgorithm(ABC):
         pass
 
 
-class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
+class SparseMongoOnlineAlgorithm(
+    MongoOnlineAlgorithm,
+):
     """Batch EM is the same as in OnlineAlgorithm.
     Global rho, pi and T are stored sparsly in MongoDB.
     used in class SparseMongoOnlineAlgorithm"""
 
     @profile
-    def __init__(
-        self,
-        gamma0: Annotated[float, Ge(0)] = 1.0,
-        decay: Annotated[float, Gt(0)] = 0.6,
-        mongo_uri: str = "mongodb://localhost:27017/",
-        top_k: Annotated[int, Gt(0)] | None = None,
-    ) -> None:
-        self.gamma0 = gamma0
-        self.decay = decay
-        self.t = 0
-        self.top_k = top_k
-
-        # Initialize MongoDB connection
-        self.client = MongoClient(mongo_uri)
-        self.db = self.client[self.__class__.__name__]
-
-        # Initialize collections if they don't exist
-        collections = [
-            "task_class_probs",
-            "class_priors",
-            "worker_confusion_matrices",
-            "task_mapping",
-            "worker_mapping",
-            "class_mapping",
-        ]
-        for coll_name in collections:
-            if coll_name not in self.db.list_collection_names():
-                self.db.create_collection(coll_name)
-
-        self.task_mapping = self.db.get_collection("task_mapping")
-        self.worker_mapping = self.db.get_collection("worker_mapping")
-        self.class_mapping = self.db.get_collection("class_mapping")
-
-    @staticmethod
-    def _escape_id(id_str: str) -> str:
-        """Escape dots in ID strings to avoid MongoDB field path issues."""
-        if isinstance(id_str, str):
-            return id_str.replace(".", "__DOT__")
-        return str(id_str)
-
-    @staticmethod
-    def _unescape_id(escaped_id: str) -> str:
-        """Unescape dots in ID strings."""
-        if isinstance(escaped_id, str):
-            return escaped_id.replace("__DOT__", ".")
-        return str(escaped_id)
-
-    @property
-    def n_classes(self) -> int:
-        return self.class_mapping.count_documents({})
-
-    @property
-    def n_workers(self) -> int:
-        return self.worker_mapping.count_documents({})
-
-    @property
-    def n_task(self) -> int:
-        return self.task_mapping.count_documents({})
-
-    @property
-    def gamma(self) -> float:
-        """Compute current step size"""
-        return self.gamma0 / (self.t) ** self.decay
-
-    def drop(self):
-        self.client.drop_database(self.__class__.__name__)
-
-    @profile
-    def _load_pi_for_worker(self, worker_id: str) -> np.ndarray:
-        doc = self.db.worker_confusion_matrices.find_one({"_id": worker_id})
-        n_classes = self.n_classes
-        confusion_matrix = np.zeros((n_classes, n_classes))
-        if doc is not None and "confusion_matrix" in doc:
-            for entry in doc["confusion_matrix"]:
-                from_idx = entry["from_class_id"]
-                to_idx = entry["to_class_id"]
-                prob = entry["prob"]
-                if from_idx < n_classes and to_idx < n_classes:
-                    confusion_matrix[from_idx, to_idx] = prob
-        return confusion_matrix
-
-    @profile
-    def _update_pi_for_worker_in_mongodb(
-        self,
-        worker_id: int,
-        confusion_matrix: np.ndarray,
-    ) -> None:
-        # Convert the full matrix to sparse list of non-zero entries
-        n_classes = self.n_classes
-        sparse_entries = []
-        for i in range(n_classes):
-            for j in range(n_classes):
-                prob = confusion_matrix[i, j]
-                if prob != 0:  # Only store non-zero entries
-                    sparse_entries.append(
-                        {
-                            "from_class_id": i,
-                            "to_class_id": j,
-                            "prob": prob,
-                        },
-                    )
-        doc = {
-            "_id": worker_id,
-            "confusion_matrix": sparse_entries,
-            "n_classes": self.n_classes,
-        }
-        self.db.worker_confusion_matrices.replace_one(
-            {"_id": worker_id},
-            doc,
-            upsert=True,
-        )
-
-    @property
-    def T(self) -> np.ndarray:
-        """Load the entire T matrix from MongoDB into a numpy array."""
-        T_array = np.zeros((self.n_task, self.n_classes))
-
-        task_idx_map = {
-            doc["_id"]: doc["index"]
-            for doc in self.task_mapping.find({}, {"_id": 1, "index": 1})
-        }
-        class_idx_map = {
-            str(doc["_id"]): doc["index"]
-            for doc in self.class_mapping.find({}, {"_id": 1, "index": 1})
-        }
-
-        task_probs_cursor = self.db.task_class_probs.find(
-            {},
-            {"_id": 1, "probs": 1},
-        )
-
-        for task in task_probs_cursor:
-            task_idx = task_idx_map.get(task["_id"])
-            if task_idx is None:
-                continue
-
-            for cls_key, prob in task.get("probs", {}).items():
-                class_idx = class_idx_map.get(str(cls_key))
-                if class_idx is not None:
-                    T_array[task_idx, class_idx] = prob
-
-        return T_array
-
-    @property
-    def rho(self) -> np.ndarray:
-        """Load the rho array from MongoDB into a numpy array."""
-        rho = np.zeros(self.n_classes)
-
-        class_idx_map = {
-            str(doc["_id"]): doc["index"]
-            for doc in self.class_mapping.find({}, {"_id": 1, "index": 1})
-        }
-
-        for doc in self.db.class_priors.find({}, {"_id": 1, "prob": 1}):
-            class_id = str(doc["_id"])
-            idx = class_idx_map.get(class_id)
-            if idx is not None:
-                rho[idx] = doc["prob"]
-
-        return rho
-
-    @property
-    def pi(self) -> np.ndarray:
-        """Load the entire pi array from MongoDB into a numpy array."""
-        pi = np.zeros((self.n_workers, self.n_classes, self.n_classes))
-        for worker_id in range(self.n_workers):
-            pi[worker_id, :, :] = self._load_pi_for_worker(str(worker_id))
-        return pi
-
-    @profile
-    def get_or_create_indices(self, collection, keys: list[Hashable]) -> dict:
-        existing_docs = collection.find({"_id": {"$in": keys}})
-        existing_map = {doc["_id"]: doc["index"] for doc in existing_docs}
-        new_keys = [k for k in keys if k not in existing_map]
-
-        if new_keys:
-            max_index = collection.estimated_document_count()
-            new_docs = [
-                {"_id": key, "index": max_index + i}
-                for i, key in enumerate(new_keys)
-            ]
-            collection.insert_many(new_docs)
-
-            for i, key in enumerate(new_keys):
-                existing_map[key] = max_index + i
-
-        return existing_map
-
-    @profile
-    def _prepare_mapping(
-        self,
-        batch: AnswersDict,
-        task_mapping: TaskMapping,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
-    ) -> None:
-        """Updates the provided mappings in-place."""
-        for task_id, worker_class in batch.items():
-            # Remove trailing periods from task_id
-            task_id = self._escape_id(str(task_id))
-
-            if task_id not in task_mapping:
-                task_mapping[task_id] = len(task_mapping)
-
-            for worker_id, class_id in worker_class.items():
-                # Remove trailing periods from worker_id and class_id
-                worker_id = self._escape_id(str(worker_id))
-                class_id = self._escape_id(str(class_id))
-
-                if worker_id not in worker_mapping:
-                    worker_mapping[worker_id] = len(worker_mapping)
-                if class_id not in class_mapping:
-                    class_mapping[class_id] = len(class_mapping)
-
-        self._reverse_task_mapping = {v: k for k, v in task_mapping.items()}
-        self._reverse_worker_mapping = {
-            v: k for k, v in worker_mapping.items()
-        }
-        self._reverse_class_mapping = {v: k for k, v in class_mapping.items()}
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
 
     @profile
     def _process_batch_to_matrix(
@@ -925,13 +656,7 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         coords = [[], [], []]  # [task_indices, worker_indices, class_indices]
 
         for task_id, worker_class in batch.items():
-            # Remove trailing periods from task_id
-            task_id = self._escape_id(str(task_id))
             for worker_id, class_id in worker_class.items():
-                # Remove trailing periods from worker_id and class_id
-                worker_id = self._escape_id(str(worker_id))
-                class_id = self._escape_id(str(class_id))
-
                 task_index = task_mapping[task_id]
                 worker_index = worker_mapping[worker_id]
                 class_index = class_mapping[class_id]
@@ -951,10 +676,10 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
     @profile
     def _init_T(
         self,
-        batch_matrix: np.ndarray,
+        batch_matrix: sp.COO,
         task_mapping: TaskMapping,
         class_mapping: ClassMapping,
-    ) -> np.ndarray:
+    ) -> sp.COO:
         """Initialize T matrix based on batch data."""
 
         T = batch_matrix.sum(axis=1)
@@ -981,161 +706,6 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
                 batch_T[batch_task_idx, batch_class_idx] += self.gamma * prob
 
         return sp.COO(batch_T)
-
-    @profile
-    def get_probas(self) -> np.ndarray:
-        """Get current estimates of task-class probabilities"""
-        return self.T
-
-    @profile
-    def get_answers(self) -> np.ndarray:
-        """Get current most likely class for each task. Shouldn't
-        be used."""
-        if self.n_task == 0:
-            raise NotInitialized(self.__class__.__name__)
-        T = self.T
-
-        rev_class = {
-            doc["index"]: doc["_id"]
-            for doc in self.db.get_collection("class_mapping").find({})
-        }
-        map_back = np.vectorize(lambda x: rev_class[x])
-        return map_back(np.argmax(T, axis=1))
-
-    @profile
-    def get_answer(self, task_id):
-        """Get current most likely class for each task. Shouldn't
-        be used."""
-
-        return self.db.task_class_probs.find_one({"_id": task_id})[
-            "current_answer"
-        ]
-
-    @profile
-    def process_batch(
-        self,
-        batch: AnswersDict,
-        maxiter: int = 50,
-        epsilon: float = 1e-6,
-    ) -> list[float]:
-        """Process a batch with per-batch EM until local convergence."""
-        self.t += 1
-
-        task_mapping: TaskMapping = {}
-        worker_mapping: WorkerMapping = {}
-        class_mapping: ClassMapping = {}
-
-        self._prepare_mapping(
-            batch,
-            task_mapping,
-            worker_mapping,
-            class_mapping,
-        )
-
-        batch_matrix = self._process_batch_to_matrix(
-            batch,
-            task_mapping,
-            worker_mapping,
-            class_mapping,
-        )
-        return self.process_batch_matrix(
-            batch_matrix,
-            task_mapping,
-            worker_mapping,
-            class_mapping,
-            maxiter,
-            epsilon,
-        )
-
-    @profile
-    def process_batch_matrix(
-        self,
-        batch_matrix: np.ndarray,
-        task_mapping: TaskMapping,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
-        maxiter: int = 50,
-        epsilon: float = 1e-6,
-    ) -> list[float]:
-        self.get_or_create_indices(self.task_mapping, list(task_mapping))
-        self.get_or_create_indices(self.worker_mapping, list(worker_mapping))
-        self.get_or_create_indices(self.class_mapping, list(class_mapping))
-
-        return self._em_loop_on_batch(
-            batch_matrix,
-            task_mapping,
-            worker_mapping,
-            class_mapping,
-            epsilon,
-            maxiter,
-        )
-
-    @profile
-    def _em_loop_on_batch(
-        self,
-        batch_matrix: np.ndarray,
-        task_mapping: TaskMapping,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
-        epsilon: Annotated[float, Ge(0)] = 1e-6,
-        maxiter: Annotated[int, Gt(0)] = 50,
-    ) -> list[float]:
-        i = 0
-        eps = np.inf
-        ll: list[float] = []
-
-        batch_T = self._init_T(
-            batch_matrix,
-            task_mapping,
-            class_mapping,
-        )
-
-        while i < maxiter and eps > epsilon:
-            batch_rho, batch_pi = self._m_step(batch_matrix, batch_T)
-
-            batch_T, batch_denom_e_step = self._e_step(
-                batch_matrix,
-                batch_pi,
-                batch_rho,
-            )
-
-            likeli = np.log(np.sum(batch_denom_e_step))
-            ll.append(likeli)
-            if i > 0:
-                eps = np.abs(ll[-1] - ll[-2])
-            i += 1
-
-        if eps > epsilon:
-            warnings.warn(
-                DidNotConverge(self.__class__.__name__, eps, epsilon),
-                stacklevel=2,
-            )
-
-        # Online updates
-        self._online_update(
-            task_mapping,
-            worker_mapping,
-            class_mapping,
-            batch_T,
-            batch_rho,
-            batch_pi,
-        )
-
-        return ll
-
-    @profile
-    def _online_update(
-        self,
-        task_mapping: TaskMapping,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
-        batch_T: np.ndarray,
-        batch_rho: np.ndarray,
-        batch_pi: np.ndarray,
-    ) -> None:
-        self._online_update_T(task_mapping, class_mapping, batch_T, self.top_k)
-        self._online_update_rho(class_mapping, batch_rho)
-        self._online_update_pi(worker_mapping, class_mapping, batch_pi)
 
     @profile
     def _online_update_T(
@@ -1222,131 +792,18 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
             )
 
         if updates:
-            self.db.task_class_probs.bulk_write(updates, ordered=False)
+            with self.mongo_timer("online update class probs"):
+                self.db.task_class_probs.bulk_write(updates, ordered=False)
             self._normalize_probs(task_names.tolist())
 
-    @profile
-    def _online_update_rho(
-        self,
-        class_mapping: ClassMapping,
-        batch_rho: np.ndarray,
-    ) -> None:
-        scale = 1 - self.gamma
-
-        self.db.class_priors.update_many(
-            {},  # filter: update all documents
-            [
-                {
-                    "$set": {
-                        "prob": {"$multiply": ["$prob", scale]},
-                    },
-                },
-            ],
-        )
-
-        ops = []
-
-        for class_name, batch_class_idx in class_mapping.items():
-            delta = batch_rho[batch_class_idx] * self.gamma
-
-            ops.append(
-                UpdateOne(
-                    {"_id": class_name},
-                    {"$inc": {"prob": delta}},  # increment
-                    upsert=True,
-                ),
-            )
-
-        # Bulk write to rho collection
-        if ops:
-            self.db.class_priors.bulk_write(ops)
-
-    @profile
+    @abstractmethod
     def _online_update_pi(
         self,
         worker_mapping: WorkerMapping,
         class_mapping: ClassMapping,
         batch_pi: np.ndarray,
     ) -> None:
-        class_docs = self.db.class_mapping.find(
-            {"_id": {"$in": list(class_mapping.keys())}},
-        )
-        batch_to_global = {
-            class_mapping[doc["_id"]]: doc["index"] for doc in class_docs
-        }
-
-        worker_confusions_cursor = self.db.worker_confusion_matrices.find(
-            {"_id": {"$in": list(worker_mapping.keys())}},
-        )
-        worker_confusions = {
-            doc["_id"]: doc.get("confusion_matrix", [])
-            for doc in worker_confusions_cursor
-        }
-        updates = []
-        for worker, batch_worker_idx in worker_mapping.items():
-            confusion_matrix = worker_confusions.get(worker, [])
-
-            entry_map = {
-                (entry["from_class_id"], entry["to_class_id"]): idx
-                for idx, entry in enumerate(confusion_matrix)
-            }
-
-            # Update the confusion matrix with new probabilities
-            for i_batch, i_global in batch_to_global.items():
-                for j_batch, j_global in batch_to_global.items():
-                    batch_prob = batch_pi[batch_worker_idx, i_batch, j_batch]
-                    key = (i_global, j_global)
-
-                    if key in entry_map:
-                        idx = entry_map[key]
-                        confusion_matrix[idx]["prob"] = (
-                            1 - self.gamma
-                        ) * confusion_matrix[idx][
-                            "prob"
-                        ] + self.gamma * batch_prob
-                    else:
-                        if batch_prob == 0:
-                            continue
-                        confusion_matrix.append(
-                            {
-                                "from_class_id": i_global,
-                                "to_class_id": j_global,
-                                "prob": self.gamma * batch_prob,
-                            },
-                        )
-                        entry_map[key] = len(confusion_matrix) - 1
-
-            # Normalize the confusion matrix
-            from_class_ids = set(
-                entry["from_class_id"] for entry in confusion_matrix
-            )
-
-            for from_class_id in from_class_ids:
-                # Filter entries with the current from_class_id
-                entries = [
-                    e
-                    for e in confusion_matrix
-                    if e["from_class_id"] == from_class_id
-                ]
-                if entries:
-                    row_sum = sum(entry["prob"] for entry in entries)
-                    if row_sum > 0:
-                        for entry in entries:
-                            entry["prob"] /= row_sum
-
-            # Save the updated confusion matrix back to MongoDB
-            updates.append(
-                UpdateOne(
-                    {"_id": worker},
-                    {"$set": {"confusion_matrix": confusion_matrix}},
-                    upsert=True,
-                ),
-            )
-        if updates:
-            self.db.worker_confusion_matrices.bulk_write(
-                updates,
-                ordered=False,
-            )
+        "Online update pi"
 
     @abstractmethod
     def _e_step(
@@ -1364,3 +821,185 @@ class SparseMongoOnlineAlgorithm(MongoOnlineAlgorithm):
         batch_T: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         pass
+
+
+class RetroactiveSparseMongoOnlineAlgorithm(SparseMongoOnlineAlgorithm):
+    def __init__(
+        self,
+        recursion_limit: Annotated[int, Ge(0)] = 5,
+        *args,
+        **kwargs,
+    ) -> None:
+        self.recursion_limit = validate_recursion_limit(recursion_limit)
+        super().__init__(*args, **kwargs)
+
+    @profile
+    def _normalize_probs(self, updated_task_ids: list[str]) -> None:
+        current_time = datetime.now(tz=UTC)
+        docs = list(
+            self.db.task_class_probs.find(
+                {"_id": {"$in": updated_task_ids}},
+                {
+                    "_id": 1,
+                    "probs": 1,
+                    "current_answer": 1,
+                    "answer_history": 1,
+                },
+            ),
+        )
+        updates = []
+        for doc in docs:
+            probs = doc.get("probs", {})
+            total = sum(probs.values())
+            if total == 0:
+                normalized = dict.fromkeys(probs, 0)
+                current_answer = None
+            else:
+                normalized = {k: v / total for k, v in probs.items()}
+                current_answer = max(normalized, key=normalized.get)
+
+            # Initialize answer_history if it doesn't exist
+            if "answer_history" not in doc:
+                answer_history = []
+            else:
+                answer_history = doc["answer_history"]
+
+            # Store the previous answer in history if it exists and is different from the new one
+            if (
+                "current_answer" in doc
+                and doc["current_answer"] != current_answer
+            ):
+                answer_history.append(
+                    {
+                        "timestamp": current_time,
+                        "answer": doc["current_answer"],
+                    },
+                )
+
+            # Prepare the update operation with history
+            update_fields = {
+                "probs": normalized,
+                "current_answer": current_answer,
+                "answer_history": answer_history,
+                "last_reviewed_answer": doc.get(
+                    "last_reviewed_answer",
+                ),  # preserve existing
+            }
+
+            updates.append(
+                UpdateOne(
+                    {"_id": doc["_id"]},
+                    {"$set": update_fields},
+                ),
+            )
+        if updates:
+            self.db.task_class_probs.bulk_write(updates, ordered=False)
+
+    @profile
+    def process_batch(
+        self,
+        batch: AnswersDict,
+        maxiter: int = 50,
+        epsilon: float = 1e-6,
+        _depth: int = 0,
+    ) -> list[float]:
+        ll = super().process_batch(batch, maxiter, epsilon)
+
+        self._perform_retroactive_updates(_depth=_depth + 1)
+        return ll
+
+    @profile
+    def _perform_retroactive_updates(self, _depth: int = 0) -> None:
+        raise NotImplementedError
+        if _depth > self.recursion_limit:
+            msg = f"Max recursion depth {self.recursion_limit} exceeded"
+            print(msg)
+            return
+
+        # Check if there are any task_class_probs documents
+        if not self.db.task_class_probs.count_documents({}, limit=1):
+            return
+
+        try:
+            # Get all tasks that have answer_history with at least one entry
+            # TODO and id should be in current tasks ,
+
+            current_tasks = list(self._reverse_task_mapping.values())
+
+            cursor = self.db.task_class_probs.find(
+                {
+                    "_id": {"$in": current_tasks},
+                    "answer_history": {"$exists": True, "$not": {"$size": 0}},
+                },
+                {
+                    "_id": 1,
+                    "current_answer": 1,
+                    "answer_history": 1,
+                    "last_reviewed_answer": 1,
+                },
+            )
+            docs = list(cursor)
+
+            changed_tasks = set()
+            # For each task, check if current_answer differs from the last answer in history
+            for doc in docs:
+                print(f"{doc=}")
+                if "current_answer" not in doc:
+                    continue
+
+                last_answer = doc["answer_history"][-1]["answer"]
+                last_reviewed = doc.get("last_reviewed_answer")
+
+                # Only trigger if current_answer != last_answer AND we haven’t already reviewed it
+                if (
+                    doc["current_answer"] != last_answer
+                    and doc["current_answer"] != last_reviewed
+                ):
+                    changed_tasks.add(doc["_id"])
+
+            if not changed_tasks:
+                return
+
+            # Get all votes for changed tasks in one query
+            task_docs = list(
+                self.db.user_votes.find(
+                    {"_id": {"$in": list(changed_tasks)}},
+                    {"_id": 1, "votes": 1},
+                ),
+            )
+
+            retro_batch = {
+                doc["_id"]: doc.get("votes", {})
+                for doc in task_docs
+                if doc.get("votes")
+            }
+
+            if retro_batch:
+                print(
+                    f"Performing retroactive update for {len(retro_batch)} tasks",
+                )
+                self.process_batch(retro_batch, maxiter=3, _depth=_depth + 1)
+
+                # Mark tasks as reviewed (store the current answer we reviewed against)
+                self.db.task_class_probs.update_many(
+                    {"_id": {"$in": list(retro_batch.keys())}},
+                    {
+                        "$set": {"last_reviewed_answer": None},
+                    },  # will overwrite below
+                )
+
+                for doc in task_docs:
+                    self.db.task_class_probs.update_one(
+                        {"_id": doc["_id"]},
+                        {
+                            "$set": {
+                                "last_reviewed_answer": retro_batch[
+                                    doc["_id"]
+                                ],
+                            },
+                        },
+                    )
+
+        except Exception as e:
+            print(f"Error in retroactive updates: {e!s}")
+            raise
