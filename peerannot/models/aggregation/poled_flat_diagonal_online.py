@@ -48,10 +48,6 @@ class VectorizedPooledFlatDiagonalOnline(PooledDiagonalMultinomialOnline):
         batch_T = np.where(batch_denom_e_step > 0, T / batch_denom_e_step, T)
         return batch_T, batch_denom_e_step
 
-    @property
-    def pi(self) -> np.ndarray:
-        raise NotImplementedError
-
 
 class VectorizedPooledFlatDiagonalOnlineMongo(
     VectorizedPooledDiagonalMultinomialOnlineMongo,

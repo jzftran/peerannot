@@ -322,8 +322,9 @@ class OnlineAlgorithm(ABC):
     def _initialize_rho(self) -> None:
         self.rho = np.ones(self.n_classes) / self.n_classes
 
+    @abstractmethod
     def _initialize_pi(self) -> None:
-        self.pi = np.zeros((self.n_workers, self.n_classes, self.n_classes))
+        pass
 
     def _expand_rho(self, new_n_classes: int) -> None:
         """Expand the rho array if the number of classes increases."""
@@ -712,38 +713,14 @@ class OnlineAlgorithm(ABC):
 
         self._online_update_pi(worker_mapping, class_mapping, batch_pi)
 
+    @abstractmethod
     def _online_update_pi(
         self,
         worker_mapping: WorkerMapping,
         class_mapping: ClassMapping,
         batch_pi: np.ndarray,
     ) -> None:
-        # Update only workers present in the batch
-        for worker, batch_worker_idx in worker_mapping.items():
-            worker_idx = self.worker_mapping[worker]
-
-            # For each class in the batch, map batch class idx to global class idx
-            batch_to_global = {
-                batch_class_idx: self.class_mapping[class_name]
-                for class_name, batch_class_idx in class_mapping.items()
-            }
-            for i_batch, i_global in batch_to_global.items():
-                for j_batch, j_global in batch_to_global.items():
-                    self.pi[worker_idx, i_global, j_global] = (
-                        1 - self.gamma
-                    ) * self.pi[
-                        worker_idx,
-                        i_global,
-                        j_global,
-                    ] + self.gamma * batch_pi[
-                        batch_worker_idx,
-                        i_batch,
-                        j_batch,
-                    ]
-
-                row_sum = self.pi[worker_idx, i_global, :].sum()
-                if row_sum > 0:
-                    self.pi[worker_idx, i_global, :] /= row_sum
+        pass
 
     def _online_update_rho(
         self,

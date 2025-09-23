@@ -348,3 +348,39 @@ class DawidSkeneOnline(OnlineAlgorithm):
             ).reshape(-1, 1)
 
         return batch_rho, batch_pi
+
+    def _initialize_pi(self) -> None:
+        self.pi = np.zeros((self.n_workers, self.n_classes, self.n_classes))
+
+    def _online_update_pi(
+        self,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
+        batch_pi: np.ndarray,
+    ) -> None:
+        # Update only workers present in the batch
+        for worker, batch_worker_idx in worker_mapping.items():
+            worker_idx = self.worker_mapping[worker]
+
+            # For each class in the batch, map batch class idx to global class idx
+            batch_to_global = {
+                batch_class_idx: self.class_mapping[class_name]
+                for class_name, batch_class_idx in class_mapping.items()
+            }
+            for i_batch, i_global in batch_to_global.items():
+                for j_batch, j_global in batch_to_global.items():
+                    self.pi[worker_idx, i_global, j_global] = (
+                        1 - self.gamma
+                    ) * self.pi[
+                        worker_idx,
+                        i_global,
+                        j_global,
+                    ] + self.gamma * batch_pi[
+                        batch_worker_idx,
+                        i_batch,
+                        j_batch,
+                    ]
+
+                row_sum = self.pi[worker_idx, i_global, :].sum()
+                if row_sum > 0:
+                    self.pi[worker_idx, i_global, :] /= row_sum

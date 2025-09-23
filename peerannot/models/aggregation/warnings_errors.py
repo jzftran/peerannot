@@ -34,3 +34,8 @@ class NotSliceError(TypeError):
     def __init__(self) -> None:
         msg = "Each slice must be a slice, int, or None."
         super().__init__(msg)
+
+
+class TaskNotFoundError(KeyError):
+    def __init__(self, task_id):
+        super().__init__(f"No task found with id {task_id}")

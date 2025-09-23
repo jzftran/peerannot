@@ -11,7 +11,7 @@ class FlatSingleBinomialOnline(MultinomialBinaryOnline):
     def _e_step(self, batch_matrix, batch_pi, batch_rho):
         n_tasks, n_workers, n_classes = batch_matrix.shape
 
-        T = np.zeros(n_tasks, n_classes)
+        T = np.zeros((n_tasks, n_classes))
         for i in range(n_tasks):
             for j in range(n_classes):
                 # Shape: (n_workers, n_classes)
@@ -34,10 +34,6 @@ class FlatSingleBinomialOnline(MultinomialBinaryOnline):
         denom = T.sum(axis=1, keepdims=True)
         T = np.where(denom > 0, T / denom, T)
         return T, denom
-
-    @property
-    def pi(self) -> np.ndarray:
-        raise NotImplementedError
 
 
 # %%

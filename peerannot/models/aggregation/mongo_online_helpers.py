@@ -22,6 +22,7 @@ from peerannot.models.aggregation.online_helpers import (
 from peerannot.models.aggregation.warnings_errors import (
     DidNotConverge,
     NotInitialized,
+    TaskNotFoundError,
 )
 
 if TYPE_CHECKING:
@@ -41,7 +42,6 @@ def apply_func_recursive(d, func):
     return func(d)
 
 
-# %%
 class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
     """Batch EM is the same as in OnlineAlgorithm.
     Global rho, pi and T are stored sparsly in MongoDB.
@@ -51,7 +51,7 @@ class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
         self,
         gamma0: Annotated[float, Ge(0)] = 1.0,
         decay: Annotated[float, Gt(0)] = 0.6,
-        mongo_uri: str = "mongodb://localhost:27017/",
+        mongo_client: MongoClient | None = None,
         top_k: Annotated[int, Gt(0)] | None = None,
     ) -> None:
         self.gamma0 = gamma0
@@ -60,7 +60,7 @@ class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
         self.top_k = top_k
 
         # Initialize MongoDB connection
-        self.client = MongoClient(mongo_uri)
+        self.client = mongo_client or MongoClient("mongodb://localhost:27017/")
         self.db = self.client[self.__class__.__name__]
 
         # Initialize collections if they don't exist
@@ -313,13 +313,11 @@ class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
         map_back = np.vectorize(lambda x: rev_class[x])
         return map_back(np.argmax(T, axis=1))
 
-    def get_answer(self, task_id: Hashable):
-        """Get current most likely class for each task. Shouldn't
-        be used."""
-
-        return self.db.task_class_probs.find_one({"_id": task_id})[
-            "current_answer"
-        ]
+    def get_answer(self, task_id: Hashable) -> str:
+        doc = self.db.task_class_probs.find_one({"_id": task_id})
+        if doc is None:
+            raise TaskNotFoundError(task_id)
+        return str(doc["current_answer"])
 
     @profile
     def process_batch(
