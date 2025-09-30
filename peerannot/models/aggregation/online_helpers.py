@@ -71,7 +71,9 @@ def batch_generator_by_task(
     {'obs1': {'u1': 10}, 'obs2': {'u2': 20}}
     {'obs3': {'u1': 30}}
     """
-
+    if batch_size <= 0:
+        msg = "batch_size must be a positive integer."
+        raise ValueError(msg)
     tasks = list(answers.items())
     for i in range(0, len(tasks), batch_size):
         yield dict(tasks[i : i + batch_size])
@@ -109,6 +111,9 @@ def batch_generator_by_user(
     {'obs2': {'u2': 20}}
     {'obs1': {'u1': 10}, 'obs3': {'u1': 30}}
     """
+    if batch_size <= 0:
+        msg = "batch_size must be a positive integer."
+        raise ValueError(msg)
     all_users = {user_id for obs in answers.values() for user_id in obs}
 
     for user_batch in batched(all_users, batch_size):
@@ -159,6 +164,9 @@ def batch_generator_by_vote(
     {'obs2': {'u2': 20}}
     {'obs3': {'u1': 30}}
     """
+    if batch_size <= 0:
+        msg = "batch_size must be a positive integer."
+        raise ValueError(msg)
     current_batch: AnswersDict = {}
     current_count = 0
 

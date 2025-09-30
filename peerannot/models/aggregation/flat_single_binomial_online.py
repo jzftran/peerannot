@@ -1,5 +1,9 @@
-import numpy as np
+from __future__ import annotations
 
+import numpy as np
+import sparse as sp
+
+from peerannot.models.aggregation.mongo_online_helpers import EStepResult
 from peerannot.models.aggregation.multinomial_binary_online import (
     MultinomialBinaryOnline,
     VectorizedMultinomialBinaryOnlineMongo,
@@ -85,7 +89,12 @@ class VectorizedFlatSingleBinomialOnline(MultinomialBinaryOnline):
 class VectorizedFlatSingleBinomialOnlineMongo(
     VectorizedMultinomialBinaryOnlineMongo,
 ):
-    def _e_step(self, batch_matrix, batch_pi, batch_rho):
+    def _e_step(
+        self,
+        batch_matrix: sp.COO,
+        batch_pi: sp.COO | np.array,
+        batch_rho: sp.COO,
+    ) -> EStepResult:
         n_tasks, _, n_classes = batch_matrix.shape
         tasks, workers, assigned_classes = batch_matrix.coords
         counts = batch_matrix.data  # shape: (nnz,)
@@ -120,7 +129,7 @@ class VectorizedFlatSingleBinomialOnlineMongo(
 
         denom = T.sum(axis=1, keepdims=True).todense()
         batch_T = np.where(denom > 0, T / denom, T)
-        return batch_T, denom
+        return EStepResult(batch_T, denom)
 
     @property
     def pi(self) -> np.ndarray:

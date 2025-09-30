@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from pymongo import UpdateOne
 
 from peerannot.models.aggregation.mongo_online_helpers import (
     MongoOnlineAlgorithm,

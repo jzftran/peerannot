@@ -1,14 +1,21 @@
 # %%
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
 import sparse as sp
 from line_profiler import profile
 from pydantic import validate_call
 
+from peerannot.models.aggregation.mongo_online_helpers import EStepResult
 from peerannot.models.aggregation.online_helpers import OnlineAlgorithm
 from peerannot.models.aggregation.pooled_multinomial_binary_online import (
     VectorizedPooledMultinomialBinaryOnlineMongo,
 )
-from peerannot.models.aggregation.types import ClassMapping, WorkerMapping
+
+if TYPE_CHECKING:
+    from peerannot.models.aggregation.types import ClassMapping, WorkerMapping
 
 
 class PooledFlatSingleBinomialOnline(OnlineAlgorithm):
@@ -100,9 +107,9 @@ class VectorizedPooledFlatSingleBinomialOnlineMongo(
     def _e_step(
         self,
         batch_matrix: sp.COO,
-        batch_pi: sp.COO,
+        batch_pi: sp.COO | np.array,
         batch_rho: sp.COO,
-    ):
+    ) -> EStepResult:
         batch_n_il = np.sum(batch_matrix, axis=1)  # shape (n_tasks, n_classes)
 
         denom = 1 - batch_rho
@@ -124,4 +131,4 @@ class VectorizedPooledFlatSingleBinomialOnlineMongo(
 
         batch_denom_e_step = T.sum(axis=1, keepdims=True).todense()
         batch_T = np.where(batch_denom_e_step > 0, T / batch_denom_e_step, T)
-        return batch_T, batch_denom_e_step
+        return EStepResult(batch_T, batch_denom_e_step)

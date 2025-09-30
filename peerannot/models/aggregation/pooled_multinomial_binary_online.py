@@ -9,6 +9,8 @@ from line_profiler import profile
 from pydantic import validate_call
 
 from peerannot.models.aggregation.mongo_online_helpers import (
+    EStepResult,
+    MStepResult,
     SparseMongoOnlineAlgorithm,
 )
 from peerannot.models.aggregation.online_helpers import (
@@ -125,9 +127,9 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
     @profile
     def _m_step(
         self,
-        batch_matrix: np.ndarray,
-        batch_T: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+        batch_matrix: sp.COO,
+        batch_T: sp.COO,
+    ) -> MStepResult:
         batch_rho = batch_T.mean(axis=0)
 
         batch_T = sp.COO(batch_T)
@@ -147,7 +149,7 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
             where=(batch_total_votes != 0),
         )
 
-        return batch_rho, batch_pi
+        return MStepResult(batch_rho, batch_pi)
 
     @profile
     def _online_update_pi(
@@ -182,9 +184,9 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
     def _e_step(
         self,
         batch_matrix: sp.COO,
-        batch_pi: sp.COO,
+        batch_pi: sp.COO | np.array,
         batch_rho: sp.COO,
-    ):
+    ) -> EStepResult:
         n_tasks, _, n_classes = batch_matrix.shape
 
         # Extract COO coords & counts from batch_matrix
@@ -231,4 +233,4 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
         denom = T.sum(axis=1, keepdims=True).todense()
         batch_T = np.where(denom > 0, T / denom, T)
 
-        return batch_T, denom
+        return EStepResult(batch_T, denom)

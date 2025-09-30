@@ -1,8 +1,11 @@
 # %%
+from __future__ import annotations
+
 import numpy as np
 import sparse as sp
 from line_profiler import profile
 
+from peerannot.models.aggregation.mongo_online_helpers import EStepResult
 from peerannot.models.aggregation.pooled_diagonal_multinomial_online import (
     PooledDiagonalMultinomialOnline,
     VectorizedPooledDiagonalMultinomialOnlineMongo,
@@ -56,9 +59,9 @@ class VectorizedPooledFlatDiagonalOnlineMongo(
     def _e_step(
         self,
         batch_matrix: sp.COO,
-        batch_pi: sp.COO,
+        batch_pi: sp.COO | np.array,
         batch_rho: sp.COO,
-    ):
+    ) -> EStepResult:
         worker_labels_sum = batch_matrix.sum(
             axis=1,
         )  # shape (n_task, n_classes)
@@ -93,7 +96,7 @@ class VectorizedPooledFlatDiagonalOnlineMongo(
         batch_denom_e_step = T.sum(axis=1, keepdims=True)
 
         batch_T = np.where(batch_denom_e_step > 0, T / batch_denom_e_step, T)
-        return batch_T, batch_denom_e_step
+        return EStepResult(batch_T, batch_denom_e_step)
 
     @property
     def pi(self) -> np.ndarray:

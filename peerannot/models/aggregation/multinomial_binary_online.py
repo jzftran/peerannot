@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import sparse as sp
 from line_profiler import profile
@@ -5,6 +7,8 @@ from pydantic import validate_call
 from pymongo import UpdateOne
 
 from peerannot.models.aggregation.mongo_online_helpers import (
+    EStepResult,
+    MStepResult,
     SparseMongoOnlineAlgorithm,
 )
 from peerannot.models.aggregation.online_helpers import OnlineAlgorithm
@@ -109,9 +113,6 @@ class MultinomialBinaryOnline(OnlineAlgorithm):
 class VectorizedMultinomialBinaryOnlineMongo(
     SparseMongoOnlineAlgorithm,
 ):
-    """Vectorized pooled diagonal multinomial binary online algorithm
-    using sparse matrices and mongo."""
-
     @validate_call
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -119,9 +120,9 @@ class VectorizedMultinomialBinaryOnlineMongo(
     @profile
     def _m_step(
         self,
-        batch_matrix: np.ndarray,  # shape: (n_samples, n_workers, n_classes)
+        batch_matrix: sp.COO,  # shape: (n_samples, n_workers, n_classes)
         batch_T: np.ndarray,  # shape: (n_samples, n_classes)
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> MStepResult:
         batch_rho = batch_T.mean(axis=0)
 
         # shape: (n_samples, n_workers)
@@ -149,7 +150,7 @@ class VectorizedMultinomialBinaryOnlineMongo(
             weighted_sums,
         )
 
-        return batch_rho, batch_pi
+        return MStepResult(batch_rho, batch_pi)
 
     @profile
     def _online_update_pi(
@@ -204,9 +205,9 @@ class VectorizedMultinomialBinaryOnlineMongo(
     def _e_step(
         self,
         batch_matrix: sp.COO,
-        batch_pi: sp.COO,
+        batch_pi: sp.COO | np.array,
         batch_rho: sp.COO,
-    ) -> tuple[sp.COO, np.ndarray]:
+    ) -> EStepResult:
         n_tasks, _, n_classes = batch_matrix.shape
 
         # Compute per-worker off-diagonal probabilities
@@ -242,8 +243,40 @@ class VectorizedMultinomialBinaryOnlineMongo(
 
         batch_T = np.where(denom > 0, T / denom, T)
 
-        return batch_T, denom
+        return EStepResult(batch_T, denom)
 
     @property
     def pi(self) -> np.ndarray:
-        raise NotImplementedError
+        pi_arr = np.zeros((self.n_workers,), dtype=np.float64)
+
+        mapping_cursor = self.worker_mapping.find({}, {"_id": 1, "index": 1})
+        worker_map = {
+            doc["_id"]: doc["index"]
+            for doc in mapping_cursor
+            if "index" in doc
+        }
+
+        if not worker_map:
+            return pi_arr
+
+        worker_ids = list(worker_map.keys())
+        cursor = self.db.worker_confusion_matrices.find(
+            {"_id": {"$in": worker_ids}},
+            {"_id": 1, "confusion_matrix.prob": 1},
+        )
+
+        for doc in cursor:
+            wid = doc["_id"]
+            entry = doc.get("confusion_matrix")
+            if not entry:
+                continue
+
+            prob = entry.get("prob")
+            if prob is None:
+                continue
+
+            idx = worker_map.get(wid)
+            if idx is not None and 0 <= idx < self.n_workers:
+                pi_arr[idx] = float(prob)
+
+        return pi_arr

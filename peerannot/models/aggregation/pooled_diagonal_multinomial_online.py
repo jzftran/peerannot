@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import numpy as np
 import sparse as sp
 from line_profiler import profile
 from pydantic import validate_call
 
 from peerannot.models.aggregation.mongo_online_helpers import (
+    EStepResult,
+    MStepResult,
     SparseMongoOnlineAlgorithm,
 )
 from peerannot.models.aggregation.online_helpers import OnlineAlgorithm
@@ -116,9 +120,9 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
     @profile
     def _m_step(
         self,
-        batch_matrix: np.ndarray,
-        batch_T: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+        batch_matrix: sp.COO,
+        batch_T: sp.COO,
+    ) -> MStepResult:
         batch_rho = batch_T.mean(0)
 
         self.batch_T = batch_T
@@ -158,7 +162,7 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
         )
         self.batch_pi = batch_pi
 
-        return batch_rho, batch_pi
+        return MStepResult(batch_rho, batch_pi)
 
     @profile
     def _online_update_pi(
@@ -206,9 +210,9 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
     def _e_step(
         self,
         batch_matrix: sp.COO,
-        batch_pi: sp.COO,
+        batch_pi: sp.COO | np.array,
         batch_rho: sp.COO,
-    ):
+    ) -> EStepResult:
         n_classes = len(batch_pi)
 
         diag_terms = np.power(batch_pi[None, None, :], batch_matrix)
@@ -242,19 +246,19 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
 
         T = batch_rho[None, :] * worker_prod
 
-        batch_denom_e_step = np.sum(T, axis=1, keepdims=True)
-
-        self.Tmatrix = T
-        self.batch_denom_e_step = batch_denom_e_step
+        batch_denom_e_step = np.sum(T, axis=1, keepdims=True).todense()
 
         batch_T = np.where(
             batch_denom_e_step > 0,
-            T / batch_denom_e_step.todense(),
+            T / batch_denom_e_step,
             T,
         )
 
-        return batch_T, batch_denom_e_step
+        return EStepResult(batch_T, batch_denom_e_step)
 
     @property
     def pi(self) -> np.ndarray:
         raise NotImplementedError
+
+
+# batch_pi dense

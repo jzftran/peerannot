@@ -1,4 +1,4 @@
-# %%
+from __future__ import annotations
 
 import numpy as np
 import sparse as sp
@@ -7,6 +7,8 @@ from pydantic import validate_call
 from pymongo import UpdateOne
 
 from peerannot.models.aggregation.mongo_online_helpers import (
+    EStepResult,
+    MStepResult,
     SparseMongoOnlineAlgorithm,
 )
 from peerannot.models.aggregation.online_helpers import OnlineAlgorithm
@@ -149,8 +151,8 @@ class VectorizedDiagonalMultinomialOnlineMongo(
     def _m_step(
         self,
         batch_matrix: sp.COO,  # shape: (n_tasks, n_workers, n_classes)
-        batch_T: np.ndarray,  # shape: (n_tasks, n_classes)
-    ) -> tuple[np.ndarray, np.ndarray]:
+        batch_T: sp.COO,  # shape: (n_tasks, n_classes)
+    ) -> MStepResult:
         batch_rho = batch_T.mean(axis=0)
         batch_n_classes = batch_matrix.shape[2]
 
@@ -166,7 +168,7 @@ class VectorizedDiagonalMultinomialOnlineMongo(
         indices = np.arange(batch_n_classes)
         batch_pi = (pij_all[indices, :, indices] / denom_all_safe).T
 
-        return batch_rho, batch_pi
+        return MStepResult(batch_rho, batch_pi)
 
     @profile
     def _online_update_pi(
@@ -291,9 +293,9 @@ class VectorizedDiagonalMultinomialOnlineMongo(
     def _e_step(
         self,
         batch_matrix: sp.COO,
-        batch_pi: np.ndarray,
-        batch_rho: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+        batch_pi: sp.COO | np.array,
+        batch_rho: sp.COO,
+    ) -> EStepResult:
         batch_n_classes = batch_matrix.shape[2]
 
         batch_pi_non_diag_values = (np.ones_like(batch_pi) - batch_pi) / (
@@ -347,7 +349,7 @@ class VectorizedDiagonalMultinomialOnlineMongo(
         batch_denom_e_step = T.sum(1, keepdims=True).todense()
         batch_T = np.where(batch_denom_e_step > 0, T / batch_denom_e_step, T)
 
-        return batch_T, batch_denom_e_step
+        return EStepResult(batch_T, batch_denom_e_step)
 
     @property
     def pi(self) -> np.ndarray:

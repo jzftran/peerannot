@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import (
     TYPE_CHECKING,
     Annotated,
+    NamedTuple,
 )
 
 import numpy as np
@@ -40,6 +41,16 @@ def apply_func_recursive(d, func):
     if isinstance(d, dict):
         return {func(k): apply_func_recursive(v, func) for k, v in d.items()}
     return func(d)
+
+
+class EStepResult(NamedTuple):
+    batch_T: np.ndarray | sp.COO
+    denom_e_step: np.ndarray | sp.COO
+
+
+class MStepResult(NamedTuple):
+    batch_rho: np.ndarray | sp.COO
+    batch_pi: np.ndarray | sp.COO
 
 
 class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
@@ -806,18 +817,18 @@ class SparseMongoOnlineAlgorithm(
     @abstractmethod
     def _e_step(
         self,
-        batch_matrix: np.ndarray,
-        batch_pi: np.ndarray,
-        batch_rho: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+        batch_matrix: sp.COO,
+        batch_pi: sp.COO | np.array,
+        batch_rho: sp.COO,
+    ) -> EStepResult:
         pass
 
     @abstractmethod
     def _m_step(
         self,
-        batch_matrix: np.ndarray,
-        batch_T: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+        batch_matrix: sp.COO,
+        batch_T: sp.COO,
+    ) -> MStepResult:
         pass
 
 
