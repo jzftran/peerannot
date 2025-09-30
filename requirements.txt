@@ -15,3 +15,5 @@ cffi >=1.17.1
 pydantic >=2.10.6
 sparse>=0.15.5
 pymongo ~=4.13.2
+line_profiler
+loguru
