@@ -23,6 +23,21 @@ Installing the library gives access to the Command Line Interface using the keyw
     peerannot --help
 
 
+
+Some models within `peerannot` rely on MongoDB backend for storing results. If you plan to use stategies using sparse array representation like `VectorizedPooledFlatDiagonalOnlineMongo` or `VectorizedPooledMultinomialOnlineMongo`, or other models that require this kind of storage, ensure MongoDB is installed and running on your machine.
+You may use MongoDB with Docker. To run MongoDB in Docker you will need to install Docker, you can find the instuctions `here <https://www.docker.com/products/docker-desktop>`_.
+
+You can start a MongoDB container using Docker with the following command:
+
+.. prompt:: bash
+
+    docker run --name mongodb -d mongodb/mongodb-community-server:latest
+
+By default `peerannot` expects a local instance accessible at: `mongodb://localhost:27017`
+For more details on the underlying algorithms, see online algorithms documentation.
+
+
+
 Quick start
 ---------------
 
