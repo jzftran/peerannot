@@ -288,3 +288,17 @@ class VectorizedMultinomialBinaryOnlineMongo(
             pi_full[:, i, i] = pi_scalar[:, 0, 0]
 
         return pi_full
+
+    def build_batch_pi_tensor(
+        self,
+        batch_pi: np.ndarray,
+        class_mapping: ClassMapping,
+    ) -> np.ndarray:
+        pi_scalar = batch_pi[:, None, None]
+        n_classes = len(class_mapping)
+        off_diag = (1.0 - pi_scalar) / (n_classes - 1)
+        pi_batch = np.tile(off_diag, (1, n_classes, n_classes))
+        for i in range(n_classes):
+            pi_batch[:, i, i] = pi_scalar[:, 0, 0]
+
+        return pi_batch
