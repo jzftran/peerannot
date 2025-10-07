@@ -10,7 +10,6 @@ from peerannot.models.aggregation.multinomial_binary_online import (
 )
 
 
-# %%
 class FlatSingleBinomialOnline(MultinomialBinaryOnline):
     def _e_step(self, batch_matrix, batch_pi, batch_rho):
         n_tasks, n_workers, n_classes = batch_matrix.shape
@@ -83,9 +82,6 @@ class VectorizedFlatSingleBinomialOnline(MultinomialBinaryOnline):
         raise NotImplementedError
 
 
-# %%
-
-
 class VectorizedFlatSingleBinomialOnlineMongo(
     VectorizedMultinomialBinaryOnlineMongo,
 ):
@@ -130,7 +126,3 @@ class VectorizedFlatSingleBinomialOnlineMongo(
         denom = T.sum(axis=1, keepdims=True).todense()
         batch_T = np.where(denom > 0, T / denom, T)
         return EStepResult(batch_T, denom)
-
-    @property
-    def pi(self) -> np.ndarray:
-        raise NotImplementedError

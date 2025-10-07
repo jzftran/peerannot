@@ -353,4 +353,44 @@ class VectorizedDiagonalMultinomialOnlineMongo(
 
     @property
     def pi(self) -> np.ndarray:
-        raise NotImplementedError
+        pi = np.zeros((self.n_workers, self.n_classes), dtype=np.float64)
+
+        projection = {"_id": 1, "confusion_matrix": 1}
+
+        cursor = self.db.worker_confusion_matrices.find({}, projection)
+        for doc in cursor:
+            worker_id = doc["_id"]
+            conf = doc.get("confusion_matrix", {})
+            worker_doc = self.worker_mapping.find_one({"_id": worker_id})
+            if worker_doc is None:
+                continue
+            worker_idx = worker_doc.get("index")
+            for class_name, prob in conf.items():
+                class_doc = self.class_mapping.find_one(
+                    {"_id": class_name},
+                )
+                if class_doc is None:
+                    continue
+                class_idx = class_doc.get("index")
+                pi[worker_idx, class_idx] = float(prob)
+
+        return pi
+
+    def build_full_pi_tensor(self) -> np.ndarray:
+        pi = self.pi
+        n_workers, n_classes = pi.shape
+
+        # Off-diagonal probability for each worker and class (row-based)
+        off_diag = (1.0 - pi) / (n_classes - 1)  # (n_workers, n_classes)
+
+        # Broadcast  full_pi[w, i, j] = off_diag[w, i] for all j
+        full_pi = np.broadcast_to(
+            off_diag[:, :, None],
+            (n_workers, n_classes, n_classes),
+        ).copy()
+
+        # Replace diagonals with pi
+        idx = np.arange(n_classes)
+        full_pi[:, idx, idx] = pi
+
+        return full_pi

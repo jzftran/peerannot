@@ -159,7 +159,7 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
         batch_pi: np.ndarray,
     ):
         doc = self.db.worker_confusion_matrices.find_one(
-            {"_id": "pooledMultinomialBinary"},
+            {"_id": self.__class__.__name__},
         )
         pi_old = (
             np.array(doc["confusion_matrix"])
@@ -171,14 +171,18 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
 
         # Store updated pi
         self.db.worker_confusion_matrices.update_one(
-            {"_id": "pooledMultinomialBinary"},
+            {"_id": self.__class__.__name__},
             {"$set": {"confusion_matrix": pi_new.tolist()}},
             upsert=True,
         )
 
     @property
     def pi(self) -> np.ndarray:
-        raise NotImplementedError
+        doc = self.db.worker_confusion_matrices.find_one(
+            {"_id": self.__class__.__name__},
+        )
+        if doc is not None and "confusion_matrix" in doc:
+            return np.array(doc["confusion_matrix"])
 
     @profile
     def _e_step(
@@ -234,3 +238,23 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
         batch_T = np.where(denom > 0, T / denom, T)
 
         return EStepResult(batch_T, denom)
+
+    def build_full_pi_tensor(self) -> np.ndarray:
+        pi = self.pi
+        n_classes = self.n_classes
+        n_workers = self.n_workers
+
+        # Off-diagonal probability for each worker and class (row-based)
+        off_diag = (1.0 - pi) / (n_classes - 1)  # (n_workers, n_classes)
+
+        # Broadcast  full_pi[w, i, j] = off_diag[w, i] for all j
+        full_pi = np.broadcast_to(
+            off_diag,
+            (n_workers, n_classes, n_classes),
+        ).copy()
+
+        # Replace diagonals with pi
+        idx = np.arange(n_classes)
+        full_pi[:, idx, idx] = pi
+
+        return full_pi

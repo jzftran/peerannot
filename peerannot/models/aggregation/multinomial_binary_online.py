@@ -109,7 +109,6 @@ class MultinomialBinaryOnline(OnlineAlgorithm):
         return batch_T, batch_denom_e_step
 
 
-# %%
 class VectorizedMultinomialBinaryOnlineMongo(
     SparseMongoOnlineAlgorithm,
 ):
@@ -280,3 +279,12 @@ class VectorizedMultinomialBinaryOnlineMongo(
                 pi_arr[idx] = float(prob)
 
         return pi_arr
+
+    def build_full_pi_tensor(self) -> np.ndarray:
+        pi_scalar = self.pi[:, None, None]
+        off_diag = (1.0 - pi_scalar) / (self.n_classes - 1)
+        pi_full = np.tile(off_diag, (1, self.n_classes, self.n_classes))
+        for i in range(self.n_classes):
+            pi_full[:, i, i] = pi_scalar[:, 0, 0]
+
+        return pi_full

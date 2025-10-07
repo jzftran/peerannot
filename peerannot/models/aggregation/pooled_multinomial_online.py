@@ -158,70 +158,68 @@ class VectorizedPooledMultinomialOnlineMongo(SparseMongoOnlineAlgorithm):
         class_mapping: ClassMapping,
         batch_pi: np.ndarray,
     ) -> None:
-        doc = self.db.worker_confusion_matrices.find_one(
-            {"_id": self.__class__.__name__},
-        )
-        confusion_matrix = doc.get("confusion_matrix", []) if doc else []
+        model_name = self.__class__.__name__
+        batch_names = list(class_mapping.keys())
 
-        # Get all class names (from batch index -> name)
-        batch_to_name = self._reverse_class_mapping
+        for from_name in batch_names:
+            from_idx = class_mapping[from_name]
 
-        n_classes = len(batch_to_name)
+            doc = self.db.worker_confusion_rows.find_one(
+                {"_id": {"model": model_name, "from_class": from_name}},
+            )
+            probs = doc.get("probs", {}) if doc else {}
 
-        # Reconstruct dense global matrix from sparse DB
-        global_pi = np.zeros((n_classes, n_classes), dtype=np.float64)
-        for entry in confusion_matrix:
-            i_name, j_name = entry["from_class"], entry["to_class"]
-            if i_name in class_mapping and j_name in class_mapping:
-                i = class_mapping[i_name]
-                j = class_mapping[j_name]
-                global_pi[i, j] = float(entry["prob"])
+            updated = {}
+            for to_name, to_idx in class_mapping.items():
+                old_prob = probs.get(to_name, 0.0)
+                batch_val = float(batch_pi[from_idx, to_idx])
+                new_prob = (1 - self.gamma) * old_prob + self.gamma * batch_val
+                updated[to_name] = new_prob
 
-        # Prepare indices for sparse update
-        batch_indices = np.array(list(class_mapping.values()))
+            merged = {**probs, **updated}
 
-        gi, gj = np.meshgrid(batch_indices, batch_indices, indexing="ij")
-        bi, bj = np.meshgrid(batch_indices, batch_indices, indexing="ij")
+            # Normalize row
+            total = sum(merged.values())
+            if total > 0:
+                merged = {k: v / total for k, v in merged.items()}
 
-        gi_flat, gj_flat = gi.ravel(), gj.ravel()
-        bi_flat, bj_flat = bi.ravel(), bj.ravel()
-
-        batch_values = batch_pi[bi_flat, bj_flat].todense().ravel()
-
-        mask = batch_values != 0
-        gi_flat, gj_flat, batch_values = (
-            gi_flat[mask],
-            gj_flat[mask],
-            batch_values[mask],
-        )
-
-        global_pi[gi_flat, gj_flat] = (1 - self.gamma) * global_pi[
-            gi_flat,
-            gj_flat,
-        ] + self.gamma * batch_values
-
-        # Normalize rows
-        row_sums = global_pi.sum(axis=1, keepdims=True)
-        mask_rows = row_sums > 0
-        global_pi[mask_rows[:, 0]] /= row_sums[mask_rows]
-
-        # Convert back to sparse format using class names
-        new_confusion_matrix = [
-            {
-                "from_class": batch_to_name[i],
-                "to_class": batch_to_name[j],
-                "prob": float(global_pi[i, j]),
-            }
-            for i, j in zip(*np.nonzero(global_pi))
-        ]
-
-        with self.mongo_timer("online update global confusion_matrix"):
-            self.db.worker_confusion_matrices.update_one(
-                {"_id": self.__class__.__name__},
-                {"$set": {"confusion_matrix": new_confusion_matrix}},
+            self.db.worker_confusion_rows.update_one(
+                {"_id": {"model": model_name, "from_class": from_name}},
+                {"$set": {"probs": merged}},
                 upsert=True,
             )
 
     @property
     def pi(self) -> np.ndarray:
-        raise NotImplementedError
+        class_mapping_docs = list(
+            self.class_mapping.find({}, {"_id": 1, "index": 1}),
+        )
+        name_to_idx = {doc["_id"]: doc["index"] for doc in class_mapping_docs}
+
+        n_classes = len(name_to_idx)
+        pi_matrix = np.zeros((n_classes, n_classes), dtype=np.float64)
+
+        cursor = self.db.worker_confusion_rows.find(
+            {"_id.model": self.__class__.__name__},
+        )
+        for doc in cursor:
+            from_class = doc["_id"]["from_class"]
+            from_idx = name_to_idx.get(from_class)
+            if from_idx is None:
+                continue
+
+            probs = doc.get("probs", {})
+            for to_class, prob in probs.items():
+                to_idx = name_to_idx.get(to_class)
+                if to_idx is not None:
+                    pi_matrix[from_idx, to_idx] = float(prob)
+
+        return pi_matrix
+
+    def build_full_pi_tensor(self) -> np.ndarray:
+        full_pi = np.broadcast_to(
+            self.pi,
+            (self.n_workers, self.n_classes, self.n_classes),
+        ).copy()
+
+        return full_pi
