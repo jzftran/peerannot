@@ -11,14 +11,14 @@ Install
 
 To install ``peerannot``, simply run
 
-.. prompt:: bash
+.. code-block:: bash
 
     pip install peerannot
 
 Otherwise, a ``setup.cfg`` file is located at the root directory.
 Installing the library gives access to the Command Line Interface using the keyword ``peerannot`` in a bash terminal. Try it out using:
 
-.. prompt:: bash
+.. code-block:: bash
 
     peerannot --help
 
@@ -29,9 +29,9 @@ You may use MongoDB with Docker. To run MongoDB in Docker you will need to insta
 
 You can start a MongoDB container using Docker with the following command:
 
-.. prompt:: bash
+.. code-block:: bash
 
-    docker run --name mongodb -d mongodb/mongodb-community-server:latest
+    docker run --name mongodb -p 27017:27017 -d mongodb/mongodb-community-server:latest
 
 By default `peerannot` expects a local instance accessible at: `mongodb://localhost:27017`
 For more details on the underlying algorithms, see online algorithms documentation.
@@ -43,7 +43,7 @@ Quick start
 
 Our library comes with files to download and install standard datasets from the crowdsourcing community. Those are located in the `datasets` folder
 
-.. prompt:: bash
+.. code-block:: bash
 
     peerannot install ./datasets/cifar10H/cifar10h.py
 
@@ -80,7 +80,7 @@ End-to-end strategies
 
 Finally, for the end-to-end strategies using deep learning (as CoNAL or CrowdLayer), the command line is:
 
-.. prompt:: bash
+.. code-block:: bash
 
     peerannot aggregate-deep . -o cifar10h_crowdlayer \
                          --answers ./answers.json \
@@ -100,7 +100,7 @@ In ``peerannot``, one of our goals is to make crowdsourced datasets under the sa
 
 So, what is a crowdsourced dataset? We define each dataset as:
 
-.. prompt:: bash
+.. code-block:: bash
 
     dataset
     ├── train
@@ -116,7 +116,7 @@ So, what is a crowdsourced dataset? We define each dataset as:
 
 The crowdsourced labels for each training task are contained in the ``anwers.json`` file. They are formatted as follows:
 
-.. prompt:: bash
+.. code-block:: bash
 
     {
         0: {<worker_id>: <label>, <another_worker_id>: <label>},
@@ -128,7 +128,7 @@ The number of tasks in the ``train`` folder must match the number of entry keys 
 
 The ``metadata.json`` file contains general information about the dataset. A minimal example would be:
 
-.. prompt:: bash
+.. code-block:: bash
 
     {
         "name": <dataset>,
