@@ -293,6 +293,7 @@ class VectorizedMultinomialBinaryOnlineMongo(
         self,
         batch_pi: np.ndarray,
         class_mapping: ClassMapping,
+        worker_mapping: WorkerMapping,
     ) -> np.ndarray:
         pi_scalar = batch_pi[:, None, None]
         n_classes = len(class_mapping)

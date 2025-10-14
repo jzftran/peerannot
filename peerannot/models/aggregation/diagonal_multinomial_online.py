@@ -394,3 +394,25 @@ class VectorizedDiagonalMultinomialOnlineMongo(
         full_pi[:, idx, idx] = pi
 
         return full_pi
+
+    def build_batch_pi_tensor(
+        self,
+        batch_pi: np.ndarray,
+        class_mapping: ClassMapping,
+        worker_mapping: WorkerMapping,
+    ) -> np.ndarray:
+        pi = batch_pi
+        n_workers, _ = pi.shape
+        n_classes = len(class_mapping)
+
+        off_diag = (1.0 - pi) / (n_classes - 1)
+
+        pi_batch = np.broadcast_to(
+            off_diag[:, :, None],
+            (n_workers, n_classes, n_classes),
+        ).copy()
+
+        idx = np.arange(n_classes)
+        pi_batch[:, idx, idx] = pi
+
+        return pi_batch

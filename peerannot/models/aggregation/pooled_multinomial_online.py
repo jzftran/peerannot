@@ -223,3 +223,18 @@ class VectorizedPooledMultinomialOnlineMongo(SparseMongoOnlineAlgorithm):
         ).copy()
 
         return full_pi
+
+    def build_batch_pi_tensor(
+        self,
+        batch_pi: np.ndarray,
+        class_mapping: ClassMapping,
+        worker_mapping: WorkerMapping,
+    ) -> np.ndarray:
+        n_workers = len(worker_mapping)
+        n_classes = len(class_mapping)
+        full_pi = np.broadcast_to(
+            batch_pi,
+            (n_workers, n_classes, n_classes),
+        ).copy()
+
+        return full_pi

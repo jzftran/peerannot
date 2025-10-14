@@ -258,13 +258,6 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
 
     @property
     def pi(self) -> np.ndarray:
-        """
-        Retrieve the global worker confusion matrix from MongoDB as a dense numpy array.
-
-        Returns:
-            np.ndarray: 2D array of shape (n_workers, n_classes)
-        """
-
         pi = np.zeros(self.n_classes, dtype=np.float64)
 
         doc = self.db.worker_confusion_matrices.find_one({})
@@ -283,14 +276,6 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
         return pi
 
     def build_full_pi_tensor(self) -> np.ndarray:
-        """
-        Build a full 3D tensor from diagonal probabilities.
-
-
-        Returns:
-            np.ndarray of shape (n_workers, n_classes, n_classes)
-        """
-
         pi = self.pi
         n_classes = self.n_classes
         n_workers = self.n_workers
@@ -305,6 +290,28 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
         # Replace diagonals with pi
         idx = np.arange(n_classes)
         full_pi[idx, idx] = pi
+
+        full_pi = np.broadcast_to(full_pi, (n_workers, n_classes, n_classes))
+        return full_pi
+
+    def build_batch_pi_tensor(
+        self,
+        batch_pi: np.ndarray,
+        class_mapping: ClassMapping,
+        worker_mapping: WorkerMapping,
+    ) -> np.ndarray:
+        n_workers = len(worker_mapping)
+        n_classes = len(class_mapping)
+        off_diag = (1.0 - batch_pi) / (n_classes - 1)
+
+        full_pi = np.broadcast_to(
+            off_diag[:, None],
+            (n_classes, n_classes),
+        ).copy()
+
+        # Replace diagonals with pi
+        idx = np.arange(n_classes)
+        full_pi[idx, idx] = batch_pi
 
         full_pi = np.broadcast_to(full_pi, (n_workers, n_classes, n_classes))
         return full_pi

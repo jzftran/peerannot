@@ -258,3 +258,27 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
         full_pi[:, idx, idx] = pi
 
         return full_pi
+
+    def build_batch_pi_tensor(
+        self,
+        batch_pi: np.ndarray,
+        class_mapping: ClassMapping,
+        worker_mapping: WorkerMapping,
+    ) -> np.ndarray:
+        n_workers = len(worker_mapping)
+        n_classes = len(class_mapping)
+
+        # Off-diagonal probability for each worker and class (row-based)
+        off_diag = (1.0 - batch_pi) / (n_classes - 1)  # (n_workers, n_classes)
+
+        # Broadcast  full_pi[w, i, j] = off_diag[w, i] for all j
+        full_pi = np.broadcast_to(
+            off_diag,
+            (n_workers, n_classes, n_classes),
+        ).copy()
+
+        # Replace diagonals with pi
+        idx = np.arange(n_classes)
+        full_pi[:, idx, idx] = batch_pi
+
+        return full_pi
