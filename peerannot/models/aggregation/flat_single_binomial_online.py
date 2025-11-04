@@ -39,7 +39,6 @@ class FlatSingleBinomialOnline(MultinomialBinaryOnline):
         return T, denom
 
 
-# %%
 class VectorizedFlatSingleBinomialOnline(MultinomialBinaryOnline):
     def _e_step(self, batch_matrix, batch_pi, batch_rho):
         n_tasks, n_workers, n_classes = batch_matrix.shape
@@ -98,13 +97,14 @@ class VectorizedFlatSingleBinomialOnlineMongo(
         one_minus_pi = 1.0 - batch_pi[workers]  # shape: (nnz,)
         rho_c = batch_rho[assigned_classes]  # shape: (nnz,)
         numerator = one_minus_pi * rho_c  # shape: (nnz,)
-
         den_sparse = sp.COO(1.0 - batch_rho[None, :])
 
-        # safe elementwise divide
-        eps = 1e-12
-        off_diag = numerator[:, None] / (den_sparse + eps)
-
+        # if it will converge to dirac distribution it will blow up
+        off_diag = np.where(
+            den_sparse > 0,
+            numerator[:, None] / den_sparse,
+            numerator[:, None],
+        )
         diag_mask = (
             assigned_classes[:, None] == np.arange(n_classes)[None, :]
         )  # shape: (nnz, n_classes)
@@ -125,55 +125,3 @@ class VectorizedFlatSingleBinomialOnlineMongo(
 
         batch_T = np.where(denom > 0, T / denom, T)
         return EStepResult(batch_T, denom)
-
-
-# Batch 1: 4 tasks
-batch1 = {
-    "task_A": {
-        "user_001": "Quercus robur",
-        "user_002": "Betula pendula",
-    },
-    "task_B": {
-        "user_003": "Pinus sylvestris",
-    },
-    "task_C": {
-        "user_001": "Fagus sylvatica",
-        "user_004": "Quercus robur",
-    },
-    "task_D": {
-        "user_002": "Betula pendula",
-        "user_005": "Acer platanoides",
-    },
-}
-
-
-# Batch 2: 5 tasks
-batch2 = {
-    "task_A": {
-        "user_003": "Pinus sylvestris",
-        "user_004": "Quercus robur",
-        "user_005": "Quercus robur",
-    },
-    "task_B": {
-        "user_002": "Pinus sylvestris",
-        "user_005": "Pinus sylvestris",
-    },
-    "task_E": {
-        "user_001": "Fagus sylvatica",
-        "user_002": "Fagus sylvatica",
-    },
-    "task_F": {
-        "user_004": "Tilia cordata",
-    },
-    "task_G": {
-        "user_003": "Pinus sylvestris",
-        "user_001": "Acer platanoides",
-        "user_005": "Fagus sylvatica",
-    },
-}
-
-
-m = VectorizedFlatSingleBinomialOnlineMongo()
-m.drop()
-m.process_batch(batch1)
-m.process_batch(batch2)

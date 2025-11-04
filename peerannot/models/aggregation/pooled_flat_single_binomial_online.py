@@ -84,7 +84,6 @@ class PooledFlatSingleBinomialOnline(OnlineAlgorithm):
             batch_T,
         )
 
-        print(f"{batch_T=}")
         return batch_T, batch_denom_e_step
 
     def _online_update_pi(

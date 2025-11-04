@@ -141,7 +141,19 @@ class VectorizedDiagonalMultinomialOnlineMongo(
     SparseMongoOnlineAlgorithm,
 ):
     """Vectorized pooled diagonal multinomial binary online algorithm
-    using sparse matrices and mongo."""
+    using sparse matrices and mongo.
+
+    Assumptions:
+
+    - workers are independente
+
+    - each worker is only characterized by their reliability in recognizing the correct class
+        (stores only diagonal of the full confusion matrix for each worker)
+
+    - all errors (misclassifications) are uniformly distributed among the incorrect classes
+
+
+    """
 
     @validate_call
     def __init__(self, **kwargs) -> None:
