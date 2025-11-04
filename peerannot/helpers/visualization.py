@@ -755,57 +755,10 @@ class PlotlyEMVisualizer:
             self.fig.update_yaxes(showticklabels=(i == 1), row=3, col=i)
 
 
-# %%
-# Batch 1: 4 tasks
-batch1 = {
-    "task_A": {
-        "user_001": "Quercus robur",
-        "user_002": "Betula pendula",
-    },
-    "task_B": {
-        "user_003": "Pinus sylvestris",
-    },
-    "task_C": {
-        "user_001": "Fagus sylvatica",
-        "user_004": "Quercus robur",
-    },
-    "task_D": {
-        "user_002": "Betula pendula",
-        "user_005": "Acer platanoides",
-    },
-}
-
-
-# Batch 2: 5 tasks
-batch2 = {
-    "task_A": {
-        "user_003": "Pinus sylvestris",
-        "user_004": "Quercus robur",
-        "user_005": "Quercus robur",
-    },
-    "task_B": {
-        "user_002": "Pinus sylvestris",
-        "user_005": "Pinus sylvestris",
-    },
-    "task_E": {
-        "user_001": "Fagus sylvatica",
-        "user_002": "Fagus sylvatica",
-    },
-    "task_F": {
-        "user_004": "Tilia cordata",
-    },
-    "task_G": {
-        "user_003": "Pinus sylvestris",
-        "user_001": "Acer platanoides",
-        "user_005": "Fagus sylvatica",
-    },
-}
-
-
 def visualize_model(
     model,
     batches,
-    maxiter,
+    maxiter=50,
     colorscale="Viridis",
     pi_renderer=None,
 ):
