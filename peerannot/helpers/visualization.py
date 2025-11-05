@@ -4,6 +4,10 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from peerannot.models.aggregation.pooled_multinomial_online import (
+    VectorizedPooledMultinomialOnlineMongo,
+)
+
 
 def get_global_params(model) -> dict[str, Any]:
     """Safely fetches global parameters (`rho`, `pi`, `T`) from the model.
@@ -679,9 +683,9 @@ class PlotlyEMVisualizer:
             for j in range(self.n_workers):
                 frame_data.append(
                     go.Heatmap(
-                        z=pi_tensor[j],
-                        x=batch_class_labels,
-                        y=batch_class_labels,
+                        z=pi_tensor[j][::-1, :],  # flip vertically
+                        y=batch_class_labels[::-1],
+                        x=batch_class_labels[::-1],
                         colorscale=self.colorscale,
                         showscale=True,
                     ),
@@ -779,3 +783,23 @@ def visualize_model(
         pi_renderer=pi_renderer,
     )
     viz.show()
+
+
+# %%
+from peerannot.helpers.visualization import visualize_model
+
+batch1 = {
+    "task_A": {"user_001": "Quercus robur", "user_002": "Betula pendula"},
+    "task_B": {"user_003": "Pinus sylvestris"},
+    "task_C": {"user_001": "Fagus sylvatica", "user_004": "Quercus robur"},
+    "task_D": {"user_002": "Betula pendula", "user_005": "Acer platanoides"},
+}
+visualize_model(
+    model=VectorizedPooledMultinomialOnlineMongo,
+    maxiter=50,
+    batches=[batch1],
+)
+
+
+model = VectorizedPooledMultinomialOnlineMongo()
+model.pi
