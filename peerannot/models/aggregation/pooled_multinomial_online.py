@@ -164,7 +164,7 @@ class VectorizedPooledMultinomialOnlineMongo(SparseMongoOnlineAlgorithm):
         for from_name in batch_names:
             from_idx = class_mapping[from_name]
 
-            doc = self.db.worker_confusion_rows.find_one(
+            doc = self.db.worker_confusion_matrices.find_one(
                 {"_id": {"model": model_name, "from_class": from_name}},
             )
             probs = doc.get("probs", {}) if doc else {}
@@ -183,7 +183,7 @@ class VectorizedPooledMultinomialOnlineMongo(SparseMongoOnlineAlgorithm):
             if total > 0:
                 merged = {k: v / total for k, v in merged.items()}
 
-            self.db.worker_confusion_rows.update_one(
+            self.db.worker_confusion_matrices.update_one(
                 {"_id": {"model": model_name, "from_class": from_name}},
                 {"$set": {"probs": merged}},
                 upsert=True,
@@ -199,7 +199,7 @@ class VectorizedPooledMultinomialOnlineMongo(SparseMongoOnlineAlgorithm):
         n_classes = len(name_to_idx)
         pi_matrix = np.zeros((n_classes, n_classes), dtype=np.float64)
 
-        cursor = self.db.worker_confusion_rows.find(
+        cursor = self.db.worker_confusion_matrices.find(
             {"_id.model": self.__class__.__name__},
         )
         for doc in cursor:
