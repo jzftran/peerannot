@@ -140,7 +140,7 @@ def remap_T_to_global(batch_T, task_mapping, class_mapping, model):
     n_tasks = model.task_mapping.count_documents({})
     n_classes = model.class_mapping.count_documents({})
 
-    # Build local→global index maps
+    # Build local->global index maps
     task_map = {
         v: model.task_mapping.find_one({"_id": k})["index"]
         for k, v in task_mapping.items()
