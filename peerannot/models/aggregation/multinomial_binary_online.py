@@ -235,7 +235,7 @@ class VectorizedMultinomialBinaryOnlineMongo(
         np.multiply.at(
             likelihood,
             (tasks[:, None], np.arange(n_classes)[None, :]),
-            probs_nnz,
+            probs_nnz.todense() if type(probs_nnz) is sp.COO else probs_nnz,
         )
         T = likelihood * batch_rho[None, :]
         denom = T.sum(axis=1, keepdims=True).todense()

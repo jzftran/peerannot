@@ -60,7 +60,7 @@ class PooledMultinomial(DawidSkene):
         )  # shape (n_classes, n_classes)
         denom = aggregated_votes.sum(axis=1, keepdims=True)
 
-        self.shared_pi = np.divide(
+        self.pi = np.divide(
             aggregated_votes,
             denom,
             out=np.zeros_like(aggregated_votes),
@@ -105,7 +105,7 @@ class PooledMultinomial(DawidSkene):
                 num = (
                     np.prod(
                         np.power(
-                            self.shared_pi[j, :],
+                            self.pi[j, :],
                             self.crowd_matrix[i, :, :],
                         ),
                     )

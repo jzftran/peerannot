@@ -133,13 +133,8 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
         batch_rho = batch_T.mean(axis=0)
 
         batch_T = sp.COO(batch_T)
-
-        # sp.einsum behaves differently
-        sum_diag_votes = np.einsum(
-            "tq, tiq ->",
-            batch_T,
-            batch_matrix,
-        )  # trace(T.T @ crowd_matrix)
+        # sp.einsum and np.einsum are buggy
+        sum_diag_votes = (batch_T * batch_matrix.sum(axis=1)).sum()
 
         batch_total_votes = batch_matrix.sum()
         batch_pi = np.divide(
@@ -227,7 +222,9 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
                 tasks[:, None],
                 np.arange(n_classes)[None, :],
             ),  # Indices to update
-            probs_nnz,  # Values to multiply in
+            probs_nnz.todense()
+            if type(probs_nnz) is sp.COO
+            else probs_nnz,  # Values to multiply in
         )
 
         # Compute T by multiplying likelihood by class priors

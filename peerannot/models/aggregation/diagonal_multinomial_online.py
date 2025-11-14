@@ -310,8 +310,11 @@ class VectorizedDiagonalMultinomialOnlineMongo(
     ) -> EStepResult:
         batch_n_classes = batch_matrix.shape[2]
 
-        batch_pi_non_diag_values = (np.ones_like(batch_pi) - batch_pi) / (
-            batch_n_classes - 1
+        denom = np.maximum(batch_n_classes - 1, 1)
+        batch_pi_non_diag_values = np.where(
+            batch_n_classes > 1,
+            (np.ones_like(batch_pi) - batch_pi) / denom,
+            0.0,
         )
 
         # Expand batch_pi and batch_pi_non_diag_values to include the tasks dimension
@@ -332,7 +335,7 @@ class VectorizedDiagonalMultinomialOnlineMongo(
             batch_matrix,
         )  # shape (n_tasks, n_workers, n_classes)
 
-        # Compute sum_off_diag: sum over classes l ≠ j of batch_matrix[i,k,l]
+        # Compute sum_off_diag: sum over classes l != j of batch_matrix[i,k,l]
         sum_over_classes = batch_matrix.sum(
             axis=2,
         )  # shape (n_tasks, n_workers)

@@ -118,10 +118,11 @@ class VectorizedFlatSingleBinomialOnlineMongo(
         np.multiply.at(
             product,
             (tasks[:, None], np.arange(n_classes)[None, :]),
-            term,
+            term.todense() if type(term) is sp.COO else term,
         )
         T = product * batch_rho[None, :]
-        denom = T.sum(axis=1, keepdims=True).todense()
+        denom = T.sum(axis=1, keepdims=True)  # .todense()
 
         batch_T = np.where(denom > 0, T / denom, T)
+
         return EStepResult(batch_T, denom)

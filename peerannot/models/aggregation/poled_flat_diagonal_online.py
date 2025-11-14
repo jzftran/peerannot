@@ -1,4 +1,3 @@
-# %%
 from __future__ import annotations
 
 import numpy as np
@@ -71,10 +70,11 @@ class VectorizedPooledFlatDiagonalOnlineMongo(
         )  # shape (n_task, n_classes)
 
         term_k = (1 - batch_pi) * batch_rho
-        denom = (1 - batch_rho).todense()
-
-        off_diag_terms = (
-            term_k / denom[:, None]
+        denom = (1 - batch_rho).todense()[:, None]
+        off_diag_terms = np.where(
+            denom > 0,
+            term_k / denom,
+            term_k,
         )  # shape (n_classes, n_classes)
 
         n_classes = off_diag_terms.shape[0]

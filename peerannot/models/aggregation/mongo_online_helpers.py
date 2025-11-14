@@ -15,6 +15,7 @@ import sparse as sp
 from annotated_types import Ge, Gt
 from line_profiler import profile
 from pymongo import MongoClient, UpdateOne
+from tqdm import tqdm
 
 from peerannot.helpers.logging import OnlineMongoLoggingMixin
 from peerannot.models.aggregation.online_helpers import (
@@ -425,6 +426,7 @@ class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
             class_mapping,
         )
 
+        pbar = tqdm(total=maxiter, desc=self.__class__.__name__)
         while i < maxiter and eps > epsilon:
             iter_start = time.perf_counter()
 
@@ -443,8 +445,12 @@ class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
             iter_time = time.perf_counter() - iter_start
 
             self.log_em_iter(i, likeli, eps, iter_time)
-
+            pbar.update(1)
             i += 1
+
+        pbar.set_description("Finished")
+        pbar.close()
+        self.c = i
 
         if eps > epsilon:
             warnings.warn(

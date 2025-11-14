@@ -11,13 +11,13 @@ class PooledMultinomialBinary(DawidSkene):
 
 
     A simplified variant of the Dawid & Skene model where:
-        - A single accuracy parameter (`alpha`) is used across all workers.
+        - A single accuracy parameter (`pi`) is used across all workers.
         - Off-diagonal errors are assumed to be uniformly distributed.
         - Votes are pooled across all workers (no per-worker confusion matrix).
 
     Assumptions:
         - Workers are the same.
-        - Diagonal entries (correct labels) use a single shared alpha value.
+        - Diagonal entries (correct labels) use a single shared pi value.
         - Errors are symmetric across all incorrect labels (off-diagonal entries are equal).
         - Labels are conditionally independent given the true label.
 
@@ -72,7 +72,7 @@ class PooledMultinomialBinary(DawidSkene):
         - Shared accuracy:
 
         .. math::
-            \\alpha = \\frac{\\sum\\limits_{i=1}^{n_{\\text{task}}} \\sum\\limits_{\\ell=1}^K T_{i,\\ell} \\cdot n_{i,\\ell}}{\\sum\\limits_{i=1}^{n_{\\text{task}}} n_i}
+            \\pi = \\frac{\\sum\\limits_{i=1}^{n_{\\text{task}}} \\sum\\limits_{\\ell=1}^K T_{i,\\ell} \\cdot n_{i,\\ell}}{\\sum\\limits_{i=1}^{n_{\\text{task}}} n_i}
         """
 
         self.rho = self.T.sum(0) / self.n_task
@@ -83,11 +83,11 @@ class PooledMultinomialBinary(DawidSkene):
             self.crowd_matrix,
         )  # trace(T.T @ crowd_matrix)
 
-        self.alpha = sum_diag_votes / self.total_votes
+        self.pi = sum_diag_votes / self.total_votes
 
     def _e_step(self) -> None:
         """
-        E-step: update soft-labels :math:`T_{i,\\ell}` using current :math:`\\rho` and :math:`\\alpha`.
+        E-step: update soft-labels :math:`T_{i,\\ell}` using current :math:`\\rho` and :math:`\\pi`.
 
         For each task :math:`i` and label :math:`\\ell`, compute the unnormalized posterior:
 
@@ -101,13 +101,13 @@ class PooledMultinomialBinary(DawidSkene):
             T_{i,\\ell} =
             \\frac{
                 \\rho_{\\ell} \\cdot
-                \\alpha^{n_{i,\\ell}} \\cdot
-                \\left( \\frac{1 - \\alpha}{K - 1} \\right)^{n_i - n_{i,\\ell}}
+                \\pi^{n_{i,\\ell}} \\cdot
+                \\left( \\frac{1 - \\pi}{K - 1} \\right)^{n_i - n_{i,\\ell}}
             }{
                 \\sum\\limits_{\\ell'=1}^K
                 \\rho_{\\ell'} \\cdot
-                \\alpha^{n_{i,\\ell'}} \\cdot
-                \\left( \\frac{1 - \\alpha}{K - 1} \\right)^{n_i - n_{i,\\ell'}}
+                \\pi^{n_{i,\\ell'}} \\cdot
+                \\left( \\frac{1 - \\pi}{K - 1} \\right)^{n_i - n_{i,\\ell'}}
             }
         """
 
@@ -120,9 +120,9 @@ class PooledMultinomialBinary(DawidSkene):
                     i,
                     l,
                 ]  # numer of annotators of task i voting for label l
-                diag_contrib = np.power(self.alpha, n_il)
+                diag_contrib = np.power(self.pi, n_il)
                 off_diag_contrib = np.power(
-                    (1 - self.alpha) / (self.n_classes - 1),
+                    (1 - self.pi) / (self.n_classes - 1),
                     n_i - n_il,
                 )
 
@@ -136,9 +136,9 @@ class VectorizedPooledMultinomialBinary(PooledMultinomialBinary):
     def _e_step(self):
         n_i = self.n_il.sum(axis=1, keepdims=True)
 
-        diag_contrib = self.alpha**self.n_il
+        diag_contrib = self.pi**self.n_il
 
-        off_diag_factor = (1 - self.alpha) / (self.n_classes - 1)
+        off_diag_factor = (1 - self.pi) / (self.n_classes - 1)
         off_diag_contrib = off_diag_factor ** (n_i - self.n_il)
 
         T = diag_contrib * off_diag_contrib * self.rho[np.newaxis, :]

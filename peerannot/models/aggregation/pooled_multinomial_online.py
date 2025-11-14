@@ -123,12 +123,18 @@ class VectorizedPooledMultinomialOnlineMongo(SparseMongoOnlineAlgorithm):
         batch_T: sp.COO,
     ) -> tuple[np.ndarray, np.ndarray]:
         batch_rho = batch_T.mean(axis=0)
-
-        aggregated_votes = np.einsum(
-            "tq, tij -> qj",
+        # is buggy:
+        # aggregated_votes = np.einsum(
+        #     "tq, tij -> qj",
+        #     batch_T,
+        #     batch_matrix,
+        # )  # shape (n_classes, n_classes)
+        aggregated_votes = sp.tensordot(
             batch_T,
             batch_matrix,
-        )  # shape (n_classes, n_classes)
+            axes=(0, 0),
+        ).sum(axis=1)
+
         denom = aggregated_votes.sum(axis=1, keepdims=True).todense()
 
         batch_pi = np.where(
@@ -136,7 +142,6 @@ class VectorizedPooledMultinomialOnlineMongo(SparseMongoOnlineAlgorithm):
             aggregated_votes / denom,
             aggregated_votes,
         )
-
         return batch_rho, batch_pi
 
     @profile

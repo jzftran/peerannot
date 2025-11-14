@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 from functools import wraps
 from itertools import batched
@@ -13,8 +14,10 @@ from typing import (
 import numpy as np
 from annotated_types import Ge, Gt
 from pydantic import validate_call
+from tqdm import tqdm
 
 from peerannot.models.aggregation.warnings_errors import (
+    DidNotConverge,
     NotInitialized,
     NotNumpyArrayError,
     NotSliceError,
@@ -676,6 +679,7 @@ class OnlineAlgorithm(ABC):
             class_mapping,
         )
 
+        pbar = tqdm(total=maxiter, desc=self.__class__.__name__)
         while i < maxiter and eps > epsilon:
             batch_rho, batch_pi = self._m_step(batch_matrix, batch_T)
             batch_T, batch_denom_e_step = self._e_step(
@@ -688,7 +692,16 @@ class OnlineAlgorithm(ABC):
             ll.append(likeli)
             if i > 0:
                 eps = np.abs(ll[-1] - ll[-2])
+            pbar.update(1)
             i += 1
+        pbar.set_description("Finished")
+        pbar.close()
+        self.c = i
+        if eps > epsilon:
+            warnings.warn(
+                DidNotConverge(self.__class__.__name__, eps, epsilon),
+                stacklevel=2,
+            )
 
         # Online updates
         # TODO:@jzftran vectorization?
@@ -718,7 +731,8 @@ class OnlineAlgorithm(ABC):
         self._online_update_T(task_mapping, class_mapping, batch_T)
 
         self._online_update_rho(class_mapping, batch_rho)
-
+        print(f"dense {batch_rho=}")
+        print(f"dense rho {self.rho=}")
         self._online_update_pi(worker_mapping, class_mapping, batch_pi)
 
     @abstractmethod
