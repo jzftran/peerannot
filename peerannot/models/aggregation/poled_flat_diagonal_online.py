@@ -1,3 +1,4 @@
+# %%
 from __future__ import annotations
 
 import numpy as np
@@ -95,5 +96,14 @@ class VectorizedPooledFlatDiagonalOnlineMongo(
 
         batch_denom_e_step = T.sum(axis=1, keepdims=True)
 
-        batch_T = np.where(batch_denom_e_step > 0, T / batch_denom_e_step, T)
+        if not np.any(batch_denom_e_step == 0):
+            batch_denom_e_step = batch_denom_e_step.todense()
+            T.fill_value = 0.0  # dirty solution solving the mixed sparse-dense operation error
+
+        batch_T = np.where(
+            batch_denom_e_step > 0,
+            T / batch_denom_e_step,
+            T,
+        )
+
         return EStepResult(batch_T, batch_denom_e_step)

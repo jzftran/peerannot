@@ -151,10 +151,20 @@ class VectorizedPooledMultinomialOnlineMongo(SparseMongoOnlineAlgorithm):
 
         prods = pows.prod(axis=2)
 
-        batch_T = prods * batch_rho[None, :]
-        denom = batch_T.sum(axis=1, keepdims=True).todense()
-        batch_T = np.where(denom > 0, batch_T / denom, batch_T)
-        return batch_T, denom
+        prod = prods * batch_rho[None, :]
+
+        batch_denom_e_step = prod.sum(axis=1, keepdims=True)
+
+        if not np.any(batch_denom_e_step == 0):
+            batch_denom_e_step = batch_denom_e_step.todense()
+
+        batch_T = np.where(
+            batch_denom_e_step > 0,
+            prod / batch_denom_e_step,
+            prod,
+        )
+
+        return batch_T, batch_denom_e_step
 
     @profile
     def _online_update_pi(

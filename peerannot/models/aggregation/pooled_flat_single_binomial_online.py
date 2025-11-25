@@ -128,6 +128,10 @@ class VectorizedPooledFlatSingleBinomialOnlineMongo(
 
         T *= batch_rho[None, :]  # shape (n_task, K)
 
-        batch_denom_e_step = T.sum(axis=1, keepdims=True).todense()
+        batch_denom_e_step = T.sum(axis=1, keepdims=True)
+
+        if not np.any(batch_denom_e_step == 0):
+            batch_denom_e_step = batch_denom_e_step.todense()
+
         batch_T = np.where(batch_denom_e_step > 0, T / batch_denom_e_step, T)
         return EStepResult(batch_T, batch_denom_e_step)

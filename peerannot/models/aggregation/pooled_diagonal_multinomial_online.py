@@ -246,7 +246,10 @@ class VectorizedPooledDiagonalMultinomialOnlineMongo(
 
         T = batch_rho[None, :] * worker_prod
 
-        batch_denom_e_step = np.sum(T, axis=1, keepdims=True).todense()
+        batch_denom_e_step = T.sum(axis=1, keepdims=True)
+
+        if not np.any(batch_denom_e_step == 0):
+            batch_denom_e_step = batch_denom_e_step.todense()
 
         batch_T = np.where(
             batch_denom_e_step > 0,

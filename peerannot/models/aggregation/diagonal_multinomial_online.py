@@ -361,8 +361,16 @@ class VectorizedDiagonalMultinomialOnlineMongo(
 
         T = products_over_workers * batch_rho[np.newaxis, :]
 
-        batch_denom_e_step = T.sum(1, keepdims=True).todense()
-        batch_T = np.where(batch_denom_e_step > 0, T / batch_denom_e_step, T)
+        batch_denom_e_step = T.sum(axis=1, keepdims=True)
+
+        if not np.any(batch_denom_e_step == 0):
+            batch_denom_e_step = batch_denom_e_step.todense()
+
+        batch_T = np.where(
+            batch_denom_e_step > 0,
+            T / batch_denom_e_step,
+            T,
+        )
 
         return EStepResult(batch_T, batch_denom_e_step)
 

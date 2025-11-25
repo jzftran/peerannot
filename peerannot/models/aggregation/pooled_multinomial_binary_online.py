@@ -231,7 +231,11 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
         T = likelihood * batch_rho[None, :]
 
         # Compute normalization constants and final probabilities
-        denom = T.sum(axis=1, keepdims=True).todense()
+        denom = T.sum(axis=1, keepdims=True)
+
+        if not np.any(denom == 0):
+            denom = denom.todense()
+
         batch_T = np.where(denom > 0, T / denom, T)
 
         return EStepResult(batch_T, denom)
