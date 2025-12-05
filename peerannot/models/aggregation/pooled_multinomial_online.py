@@ -5,6 +5,7 @@ import sparse as sp
 from annotated_types import Ge, Gt
 from line_profiler import profile
 from pydantic import validate_call
+from pymongo import UpdateOne
 
 from peerannot.models.aggregation.mongo_online_helpers import (
     SparseMongoOnlineAlgorithm,
@@ -174,35 +175,106 @@ class VectorizedPooledMultinomialOnlineMongo(SparseMongoOnlineAlgorithm):
         batch_pi: np.ndarray,
     ) -> None:
         model_name = self.__class__.__name__
+
         batch_names = list(class_mapping.keys())
 
+        cursor = self.db.worker_confusion_matrices.find(
+            {
+                "_id": {
+                    "$in": [
+                        {"model": model_name, "from_class": name}
+                        for name in batch_names
+                    ],
+                },
+            },
+        )
+        docs = list(cursor)
+
+        old_rows = []
+        old_cols = []
+        old_data = []
+
+        existing_from_set = set()
+        for doc in docs:
+            _id = doc["_id"]
+
+            from_name = _id.get("from_class") if isinstance(_id, dict) else _id
+            if from_name not in class_mapping:
+                continue
+            r = class_mapping[from_name]
+            existing_from_set.add(from_name)
+            probs = doc.get("probs", {}) or {}
+            for to_name, prob in probs.items():
+                if to_name not in class_mapping:
+                    continue
+                c = class_mapping[to_name]
+                old_rows.append(r)
+                old_cols.append(c)
+                old_data.append(float(prob))
+
+        # old_rows = np.asarray(old_rows, dtype=int)
+        # old_cols = np.asarray(old_cols, dtype=int)
+        # old_data = np.asarray(old_data, dtype=float)
+
+        bp_rows, bp_cols = batch_pi.coords
+
+        rows_concat = np.concatenate([old_rows, bp_rows])
+        cols_concat = np.concatenate([old_cols, bp_cols])
+        data_concat = np.concatenate([old_data, batch_pi.data])
+
+        # sum duplicates by (row, col) pairs
+        # Create structured keys for lexsort: sort by (row, col)
+        order = np.lexsort((cols_concat, rows_concat))
+        rows_sorted = rows_concat[order]
+        cols_sorted = cols_concat[order]
+        data_sorted = data_concat[order]
+
+        # compute mask of new groups
+        change_mask = np.empty(rows_sorted.shape, dtype=bool)
+        change_mask[0] = True
+        if rows_sorted.size > 1:
+            change_mask[1:] = (rows_sorted[1:] != rows_sorted[:-1]) | (
+                cols_sorted[1:] != cols_sorted[:-1]
+            )
+        # indices where groups start
+        starts = np.nonzero(change_mask)[0]
+        # ends are next start or len
+        ends = np.concatenate([starts[1:], np.array([rows_sorted.size])])
+
+        uniq_rows = rows_sorted[starts]
+        uniq_cols = cols_sorted[starts]
+        # sum data within runs
+        uniq_data = np.empty(starts.size, dtype=float)
+        for i, (s, e) in enumerate(zip(starts, ends)):
+            uniq_data[i] = data_sorted[s:e].sum()
+
+        per_row = {}
+        for r, c, v in zip(uniq_rows, uniq_cols, uniq_data):
+            per_row.setdefault(int(r), []).append((int(c), float(v)))
+
+        updates = []
         for from_name in batch_names:
-            from_idx = class_mapping[from_name]
-
-            doc = self.db.worker_confusion_matrices.find_one(
-                {"_id": {"model": model_name, "from_class": from_name}},
+            r = class_mapping[from_name]
+            entries = per_row.get(r, [])
+            probs_dict = (
+                {list(class_mapping.keys())[c]: p for c, p in entries}
+                if entries
+                else {}
             )
-            probs = doc.get("probs", {}) if doc else {}
-
-            updated = {}
-            for to_name, to_idx in class_mapping.items():
-                old_prob = probs.get(to_name, 0.0)
-                batch_val = float(batch_pi[from_idx, to_idx])
-                new_prob = (1 - self.gamma) * old_prob + self.gamma * batch_val
-                updated[to_name] = new_prob
-
-            merged = {**probs, **updated}
-
-            # Normalize row
-            total = sum(merged.values())
-            if total > 0:
-                merged = {k: v / total for k, v in merged.items()}
-
-            self.db.worker_confusion_matrices.update_one(
-                {"_id": {"model": model_name, "from_class": from_name}},
-                {"$set": {"probs": merged}},
-                upsert=True,
+            updates.append(
+                UpdateOne(
+                    {"_id": {"model": model_name, "from_class": from_name}},
+                    {"$set": {"probs": probs_dict}},
+                    upsert=True,
+                ),
             )
+
+        if updates:
+            with self.mongo_timer("online update worker confusion matrices"):
+                self.db.worker_confusion_matrices.bulk_write(
+                    updates,
+                    ordered=False,
+                )
 
     @property
     def pi(self) -> np.ndarray:
