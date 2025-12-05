@@ -1,3 +1,4 @@
+# %%
 from __future__ import annotations
 
 import numpy as np
@@ -5,11 +6,187 @@ from pymongo import UpdateOne
 
 from peerannot.models.aggregation.mongo_online_helpers import (
     MongoOnlineAlgorithm,
+    SparseMongoOnlineAlgorithm,
 )
 from peerannot.models.aggregation.online_helpers import (
     OnlineAlgorithm,
 )
 from peerannot.models.aggregation.types import ClassMapping, WorkerMapping
+
+
+class VectorizedDawidSkeneOnlineMongo(SparseMongoOnlineAlgorithm):
+    def _e_step(self, batch_matrix, batch_pi, batch_rho):
+        powered = np.power(
+            batch_pi[np.newaxis, :, :, :],
+            batch_matrix[:, :, np.newaxis, :],
+        )
+
+        likelihood = powered.prod(axis=(1, 3))
+
+        batch_T = likelihood * batch_rho[np.newaxis, :]
+
+        batch_denom_e_step = batch_T.sum(axis=1, keepdims=True)
+        nonzero = batch_denom_e_step > 0
+
+        if not np.any(batch_denom_e_step == 0):
+            batch_denom_e_step = batch_denom_e_step.todense()
+
+        batch_T = np.where(nonzero, batch_T / batch_denom_e_step, batch_T)
+
+        return batch_T, batch_denom_e_step
+
+    def _m_step(self, batch_matrix, batch_T):
+        batch_rho = batch_T.mean(axis=0)
+
+        weighted = batch_T[:, None, :, None] * batch_matrix[:, :, None, :]
+
+        pij = weighted.sum(axis=0)
+
+        denom = pij.sum(axis=2)
+
+        # maybe better remove safe denom?
+        safe = np.where(denom <= 0, -1e9, denom)[..., None]
+
+        batch_pi = pij / safe
+
+        return batch_rho, batch_pi
+
+    def _load_pi_for_worker(self, worker_id: str) -> np.ndarray:
+        """
+        Load worker confusion matrix stored with class-name keys.
+        Convert class names to indices using the class_mapping collection.
+        """
+        doc = self.db.worker_confusion_matrices.find_one({"_id": worker_id})
+        n_classes = self.n_classes
+
+        # Output dense result
+        confusion_matrix = np.zeros((n_classes, n_classes), dtype=float)
+
+        if not doc or "confusion_matrix" not in doc:
+            return confusion_matrix
+
+        used_class_names = set()
+        for entry in doc["confusion_matrix"]:
+            used_class_names.add(entry["from_class"])
+            used_class_names.add(entry["to_class"])
+
+        cursor = self.db.class_mapping.find(
+            {"_id": {"$in": list(used_class_names)}},
+            {"index": 1},
+        )
+
+        name_to_idx = {doc["_id"]: doc["index"] for doc in cursor}
+
+        for entry in doc["confusion_matrix"]:
+            from_name = entry["from_class"]
+            to_name = entry["to_class"]
+            prob = float(entry["prob"])
+
+            # Skip unknown classes (should not happen)
+            if from_name not in name_to_idx or to_name not in name_to_idx:
+                continue
+
+            i = name_to_idx[from_name]
+            j = name_to_idx[to_name]
+
+            confusion_matrix[i, j] = prob
+
+        return confusion_matrix
+
+    @property
+    def pi(self) -> np.ndarray:
+        """Load the entire pi array from MongoDB into a numpy array."""
+        pi = np.zeros((self.n_workers, self.n_classes, self.n_classes))
+        for worker_doc in self.worker_mapping.find({}):
+            pi[worker_doc["index"], :, :] = self._load_pi_for_worker(
+                worker_doc["_id"],
+            )
+        return pi
+
+    def build_full_pi_tensor(self) -> np.ndarray:
+        return self.pi
+
+    def _online_update_pi(
+        self,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
+        batch_pi: np.ndarray,
+    ) -> None:
+        gamma = self.gamma
+        scale = 1.0 - gamma
+        updates = []
+
+        worker_ids = list(worker_mapping.keys())
+
+        worker_cursor = self.db.worker_confusion_matrices.find(
+            {"_id": {"$in": worker_ids}},
+            {"confusion_matrix": 1},
+        )
+
+        worker_conf = {
+            doc["_id"]: doc.get("confusion_matrix", [])
+            for doc in worker_cursor
+        }
+
+        for worker_name, batch_worker_idx in worker_mapping.items():
+            existing_matrix = worker_conf.get(worker_name, [])
+
+            entry_dict = {
+                (e["from_class"], e["to_class"]): e for e in existing_matrix
+            }
+
+            worker_batch_pi = batch_pi[batch_worker_idx]
+
+            nz_from, nz_to = np.nonzero(worker_batch_pi > 0)
+
+            for i, j in zip(nz_from, nz_to):
+                batch_prob = worker_batch_pi[i, j]
+                from_class = self._reverse_class_mapping.get(i)
+                to_class = self._reverse_class_mapping.get(j)
+                if from_class is None or to_class is None:
+                    continue
+
+                key = (from_class, to_class)
+                if key in entry_dict:
+                    # update existing
+                    entry_dict[key]["prob"] = (
+                        scale * entry_dict[key]["prob"] + gamma * batch_prob
+                    )
+                else:
+                    # add new
+                    entry_dict[key] = {
+                        "from_class": from_class,
+                        "to_class": to_class,
+                        "prob": gamma * batch_prob,
+                    }
+
+            # Normalize per from_class
+            updated_matrix = list(entry_dict.values())
+            from_class_entries = {}
+            for e in updated_matrix:
+                from_class_entries.setdefault(e["from_class"], []).append(e)
+
+            for fc, entries in from_class_entries.items():
+                row_sum = sum(e["prob"] for e in entries)
+                if row_sum > 0:
+                    inv_sum = 1.0 / row_sum
+                    for e in entries:
+                        e["prob"] *= inv_sum
+
+            updates.append(
+                UpdateOne(
+                    {"_id": worker_name},
+                    {"$set": {"confusion_matrix": updated_matrix}},
+                    upsert=True,
+                ),
+            )
+
+        if updates:
+            with self.mongo_timer("online update worker confusion matrices"):
+                self.db.worker_confusion_matrices.bulk_write(
+                    updates,
+                    ordered=False,
+                )
 
 
 class DawidSkeneMongo(MongoOnlineAlgorithm):
