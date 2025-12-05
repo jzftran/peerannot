@@ -322,14 +322,14 @@ class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
             doc["index"]: doc["_id"]
             for doc in self.db.get_collection("class_mapping").find({})
         }
-        map_back = np.vectorize(lambda x: rev_class[x])
+        map_back = np.vectorize(lambda x: self._unescape_id(rev_class[x]))
         return map_back(np.argmax(T, axis=1))
 
     def get_answer(self, task_id: Hashable) -> str:
         doc = self.db.task_class_probs.find_one({"_id": task_id})
         if doc is None:
             raise TaskNotFoundError(task_id)
-        return str(doc["current_answer"])
+        return self._unescape_id(str(doc["current_answer"]))
 
     @profile
     def process_batch(
@@ -618,7 +618,8 @@ class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
 
         # Bulk write to rho collection
         if ops:
-            self.db.class_priors.bulk_write(ops, ordered=False)
+            with self.mongo_timer("online update class class priors"):
+                self.db.class_priors.bulk_write(ops, ordered=False)
 
     @abstractmethod
     def _online_update_pi(
