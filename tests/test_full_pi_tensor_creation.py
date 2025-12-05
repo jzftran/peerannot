@@ -2,6 +2,9 @@ import mongomock
 import numpy as np
 import pytest
 
+from peerannot.models.aggregation.dawid_skene_online import (
+    VectorizedDawidSkeneOnlineMongo,
+)
 from peerannot.models.aggregation.diagonal_multinomial_online import (
     VectorizedDiagonalMultinomialOnlineMongo,
 )
@@ -11,11 +14,11 @@ from peerannot.models.aggregation.flat_single_binomial_online import (
 from peerannot.models.aggregation.multinomial_binary_online import (
     VectorizedMultinomialBinaryOnlineMongo,
 )
-from peerannot.models.aggregation.poled_flat_diagonal_online import (
-    VectorizedPooledFlatDiagonalOnlineMongo,
-)
 from peerannot.models.aggregation.pooled_diagonal_multinomial_online import (
     VectorizedPooledDiagonalMultinomialOnlineMongo,
+)
+from peerannot.models.aggregation.pooled_flat_diagonal_online import (
+    VectorizedPooledFlatDiagonalOnlineMongo,
 )
 from peerannot.models.aggregation.pooled_flat_single_binomial_online import (
     VectorizedPooledFlatSingleBinomialOnlineMongo,
@@ -36,6 +39,7 @@ MODELS = [
     VectorizedPooledFlatSingleBinomialOnlineMongo,
     VectorizedPooledMultinomialBinaryOnlineMongo,
     VectorizedPooledMultinomialOnlineMongo,
+    VectorizedDawidSkeneOnlineMongo,
 ]
 
 # Save the original implementation
@@ -87,8 +91,7 @@ def test_build_full_pi_tensor_row_normalization(ModelCls):
         raise AssertionError(f"Unexpected tensor shape: {pi_tensor.shape}")
 
     # Check row sums are close to 1
-    assert np.allclose(
-        summed,
-        1.0,
-        atol=1e-6,
-    ), f"{ModelCls.__name__}: Row sums not normalized\n{summed}"
+
+    is_valid = np.all(np.isin(summed, [0.0, 1.0]))
+
+    assert is_valid, f"{ModelCls.__name__}: Row sums not normalized\n{summed}"

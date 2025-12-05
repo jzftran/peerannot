@@ -2,6 +2,10 @@ import numpy as np
 import pytest
 import sparse as sp
 
+from peerannot.models.aggregation.dawid_skene_online import (
+    DawidSkeneMongo,
+    VectorizedDawidSkeneOnlineMongo
+)
 from peerannot.models.aggregation.diagonal_multinomial_online import (
     DiagonalMultinomialOnline,
     VectorizedDiagonalMultinomialOnlineMongo,
@@ -14,13 +18,13 @@ from peerannot.models.aggregation.multinomial_binary_online import (
     MultinomialBinaryOnline,
     VectorizedMultinomialBinaryOnlineMongo,
 )
-from peerannot.models.aggregation.poled_flat_diagonal_online import (
-    VectorizedPooledFlatDiagonalOnline,
-    VectorizedPooledFlatDiagonalOnlineMongo,
-)
 from peerannot.models.aggregation.pooled_diagonal_multinomial_online import (
     PooledDiagonalMultinomialOnline,
     VectorizedPooledDiagonalMultinomialOnlineMongo,
+)
+from peerannot.models.aggregation.pooled_flat_diagonal_online import (
+    VectorizedPooledFlatDiagonalOnline,
+    VectorizedPooledFlatDiagonalOnlineMongo,
 )
 from peerannot.models.aggregation.pooled_flat_single_binomial_online import (
     PooledFlatSingleBinomialOnline,
@@ -75,6 +79,10 @@ MODEL_PAIRS = [
         PooledMultinomialBinaryOnline,
         VectorizedPooledMultinomialBinaryOnlineMongo,
     ),
+    (
+        DawidSkeneMongo, 
+        VectorizedDawidSkeneOnlineMongo
+    )
 ]
 
 
