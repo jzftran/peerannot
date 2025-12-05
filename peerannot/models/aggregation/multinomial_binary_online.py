@@ -308,31 +308,3 @@ class VectorizedMultinomialBinaryOnlineMongo(
             pi_batch[:, i, i] = pi_scalar[:, 0, 0]
 
         return pi_batch
-
-
-# # %%
-# batch1 = {0: {0: 0}, 1: {1: 1}, 2: {2: 0}}
-
-# batch2 = {0: {3: 1, 4: 1}, 3: {2: 1, 4: 0}, 4: {2: 1, 4: 2}}
-
-
-# m = VectorizedMultinomialBinaryOnlineMongo()
-# m.drop()
-# m.process_batch(batch1)
-# m.process_batch(batch2)
-
-# # # %%
-
-# #%%
-# print('a')
-# # %%
-# # this will cause error
-# coords = [[0], [1]]  # length 1 in each list
-# data = [5.0]  # length 1
-# T = sp.COO(coords=coords, data=data, shape=(2, 2))
-
-# denom = sp.COO(np.array([[1.0], [0.0]])).todense()
-
-# # # This triggers the error
-# # np.where(denom > 0, T / denom, T)
-# # # sp.divide(T, denom, out=T, where=denom>0)
