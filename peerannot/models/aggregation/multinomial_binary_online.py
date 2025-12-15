@@ -1,3 +1,4 @@
+# %%
 from __future__ import annotations
 
 import numpy as np
@@ -11,8 +12,13 @@ from peerannot.models.aggregation.mongo_online_helpers import (
     MStepResult,
     SparseMongoOnlineAlgorithm,
 )
-from peerannot.models.aggregation.online_helpers import OnlineAlgorithm
-from peerannot.models.aggregation.types import ClassMapping, WorkerMapping
+from peerannot.models.aggregation.online_helpers import (
+    OnlineAlgorithm,
+)
+from peerannot.models.aggregation.types import (
+    ClassMapping,
+    WorkerMapping,
+)
 
 
 class MultinomialBinaryOnline(OnlineAlgorithm):
@@ -77,7 +83,6 @@ class MultinomialBinaryOnline(OnlineAlgorithm):
     ) -> tuple[np.ndarray, np.ndarray]:
         batch_n_tasks = batch_matrix.shape[0]
         batch_n_classes = batch_matrix.shape[2]
-
         off_diag_alpha = (np.ones_like(batch_pi) - batch_pi) / (
             batch_n_classes - 1
         )
@@ -102,11 +107,60 @@ class MultinomialBinaryOnline(OnlineAlgorithm):
                 T[i, j] = (
                     np.prod(diag_contrib * off_diag_contrib) * batch_rho[j]
                 )
-
         batch_denom_e_step = T.sum(1, keepdims=True)
 
         batch_T = np.where(batch_denom_e_step > 0, T / batch_denom_e_step, T)
         return batch_T, batch_denom_e_step
+
+
+class MultinomialBinaryOnlineLogSpace(MultinomialBinaryOnline):
+    def _e_step(
+        self,
+        batch_matrix: np.ndarray,
+        batch_pi: np.ndarray,
+        batch_rho: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        batch_n_tasks = batch_matrix.shape[0]
+        batch_n_classes = batch_matrix.shape[2]
+
+        # clip batch_pi to avoid log(0)
+        batch_pi = np.clip(batch_pi, 1e-10, 1.0)
+        off_diag_alpha = np.clip(
+            (1.0 - batch_pi) / (batch_n_classes - 1),
+            1e-10,
+            1.0,
+        )
+
+        log_likelihood = np.zeros(
+            (batch_n_tasks, batch_n_classes),
+            dtype=np.float64,
+        )
+
+        for i in range(batch_n_tasks):
+            for j in range(batch_n_classes):
+                diag_contrib = np.sum(
+                    np.log(batch_pi) * batch_matrix[i, :, j],
+                )
+
+                mask = np.ones(batch_n_classes, dtype=bool)
+                mask[j] = False
+                off_diag_labels = batch_matrix[i, :, mask]
+                off_diag_contrib = np.sum(
+                    np.log(off_diag_alpha) * off_diag_labels,
+                )
+
+                log_likelihood[i, j] = diag_contrib + off_diag_contrib
+
+        max_log = np.max(log_likelihood, axis=1, keepdims=True)
+        likelihood_scaled = np.exp(log_likelihood - max_log)
+
+        T_scaled = likelihood_scaled * batch_rho[None, :]
+
+        denom = T_scaled.sum(axis=1, keepdims=True)
+
+        batch_T = np.where(denom > 0, T_scaled / denom, T_scaled)
+
+        return batch_T, denom
 
 
 class VectorizedMultinomialBinaryOnlineMongo(
@@ -308,3 +362,55 @@ class VectorizedMultinomialBinaryOnlineMongo(
             pi_batch[:, i, i] = pi_scalar[:, 0, 0]
 
         return pi_batch
+
+
+class VectorizedMultinomialBinaryOnlineMongoLogSpace(
+    VectorizedMultinomialBinaryOnlineMongo,
+):
+    @profile
+    def _e_step(
+        self,
+        batch_matrix: sp.COO,
+        batch_pi: sp.COO | np.array,
+        batch_rho: sp.COO,
+    ) -> EStepResult:
+        n_tasks, _, n_classes = batch_matrix.shape
+
+        off_diag_alpha = (1.0 - batch_pi) / (n_classes - 1)
+
+        tasks, workers, assigned_classes = batch_matrix.coords
+        counts = batch_matrix.data
+
+        match_mask = assigned_classes[:, None] == np.arange(n_classes)[None, :]
+        probs_nnz = (
+            np.where(
+                match_mask,
+                batch_pi[workers][:, None],
+                off_diag_alpha[workers][:, None],
+            )
+            ** counts[:, None]
+        )
+
+        log_probs_nnz = np.log(probs_nnz)  # float64
+        log_likelihood = np.zeros((n_tasks, n_classes), dtype=np.float64)
+        np.add.at(
+            log_likelihood,
+            (tasks[:, None], np.arange(n_classes)[None, :]),
+            log_probs_nnz,
+        )
+
+        max_log = np.max(log_likelihood, axis=1, keepdims=True)
+        likelihood_scaled = np.exp(
+            log_likelihood - max_log,
+        )  # subtract max to avoid underflow
+
+        T_scaled = likelihood_scaled * batch_rho[None, :]
+
+        denom = T_scaled.sum(axis=1, keepdims=True)
+
+        if not np.any(denom == 0):
+            denom = denom.todense()
+
+        batch_T = np.where(denom > 0, T_scaled / denom, T_scaled)
+
+        return EStepResult(batch_T, denom)

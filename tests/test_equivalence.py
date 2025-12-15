@@ -4,7 +4,7 @@ import sparse as sp
 
 from peerannot.models.aggregation.dawid_skene_online import (
     DawidSkeneMongo,
-    VectorizedDawidSkeneOnlineMongo
+    VectorizedDawidSkeneOnlineMongo,
 )
 from peerannot.models.aggregation.diagonal_multinomial_online import (
     DiagonalMultinomialOnline,
@@ -16,7 +16,9 @@ from peerannot.models.aggregation.flat_single_binomial_online import (
 )
 from peerannot.models.aggregation.multinomial_binary_online import (
     MultinomialBinaryOnline,
+    MultinomialBinaryOnlineLogSpace,
     VectorizedMultinomialBinaryOnlineMongo,
+    VectorizedMultinomialBinaryOnlineMongoLogSpace,
 )
 from peerannot.models.aggregation.pooled_diagonal_multinomial_online import (
     PooledDiagonalMultinomialOnline,
@@ -80,9 +82,13 @@ MODEL_PAIRS = [
         VectorizedPooledMultinomialBinaryOnlineMongo,
     ),
     (
-        DawidSkeneMongo, 
-        VectorizedDawidSkeneOnlineMongo
-    )
+        DawidSkeneMongo,
+        VectorizedDawidSkeneOnlineMongo,
+    ),
+    (
+        MultinomialBinaryOnlineLogSpace,
+        VectorizedMultinomialBinaryOnlineMongoLogSpace,
+    ),
 ]
 
 
