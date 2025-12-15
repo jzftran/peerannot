@@ -623,6 +623,17 @@ class OnlineAlgorithm(ABC):
         map_back = np.vectorize(lambda x: rev_class[x])
         return map_back(np.argmax(self.get_probas(), axis=1))
 
+    def get_answer(self, task_id: Hashable) -> str:
+        task_index = self.task_mapping.get(str(task_id))
+
+        class_index = np.argmax(self.T[task_index])
+        rev_class = {
+            batch_class: global_class
+            for global_class, batch_class in self.class_mapping.items()
+        }
+
+        return rev_class[class_index]
+
     def process_batch(
         self,
         batch: AnswersDict,
@@ -731,8 +742,7 @@ class OnlineAlgorithm(ABC):
         self._online_update_T(task_mapping, class_mapping, batch_T)
 
         self._online_update_rho(class_mapping, batch_rho)
-        print(f"dense {batch_rho=}")
-        print(f"dense rho {self.rho=}")
+
         self._online_update_pi(worker_mapping, class_mapping, batch_pi)
 
     @abstractmethod
