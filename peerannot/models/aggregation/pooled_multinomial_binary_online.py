@@ -283,3 +283,62 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
         full_pi[:, idx, idx] = batch_pi
 
         return full_pi
+
+
+class VectorizedPooledMultinomialBinaryOnlineMongoLogSpace(
+    VectorizedPooledMultinomialBinaryOnlineMongo,
+):
+    @profile
+    def _e_step(
+        self,
+        batch_matrix: sp.COO,
+        batch_pi: sp.COO | np.array,
+        batch_rho: sp.COO,
+    ) -> EStepResult:
+        n_tasks, _, n_classes = batch_matrix.shape
+
+        tasks, _, assigned_classes = batch_matrix.coords
+        counts = batch_matrix.data
+
+        # Create match mask (nnz, n_classes)
+        # This mask is True when the assigned class matches each possible true class
+        match_mask = assigned_classes[:, None] == np.arange(n_classes)[None, :]
+
+        # Compute per-worker off-diagonal probabilities
+        # Since batch_pi is scalar, off_diag_alpha is the same for all workers
+        off_diag_alpha = (1.0 - batch_pi) / (n_classes - 1)
+
+        # Compute probabilities for each non-zero entry and each possible true class
+        probs_nnz = (
+            np.where(
+                match_mask,
+                batch_pi,  # correct assignment
+                off_diag_alpha,  # incorrect assignment
+            )
+            ** counts[:, None]
+        )
+
+        # log space acumulation
+        log_probs_nnz = np.log(probs_nnz)
+
+        log_likelihood = np.zeros((n_tasks, n_classes), dtype=np.float64)
+        np.add.at(
+            log_likelihood,
+            (tasks[:, None], np.arange(n_classes)[None, :]),
+            log_probs_nnz,
+        )
+
+        # scale by max log to avoid underflow
+        max_log = np.max(log_likelihood, axis=1, keepdims=True)
+
+        likelihood_scaled = np.exp(log_likelihood - max_log)
+        T_scaled = likelihood_scaled * batch_rho[None, :]
+
+        denom = T_scaled.sum(axis=1, keepdims=True)
+
+        if not np.any(denom == 0):
+            denom = denom.todense()
+
+        batch_T = np.where(denom > 0, T_scaled / denom, T_scaled)
+
+        return EStepResult(batch_T, denom)
