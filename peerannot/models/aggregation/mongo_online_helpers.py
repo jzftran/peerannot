@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 import warnings
 from abc import ABC, abstractmethod
+from collections import defaultdict
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import (
     TYPE_CHECKING,
@@ -926,7 +928,6 @@ class RetroactiveSparseMongoOnlineAlgorithm(SparseMongoOnlineAlgorithm):
 
     @profile
     def _perform_retroactive_updates(self, _depth: int = 0) -> None:
-        raise NotImplementedError
         if _depth > self.recursion_limit:
             msg = f"Max recursion depth {self.recursion_limit} exceeded"
             print(msg)
@@ -994,6 +995,7 @@ class RetroactiveSparseMongoOnlineAlgorithm(SparseMongoOnlineAlgorithm):
                 print(
                     f"Performing retroactive update for {len(retro_batch)} tasks",
                 )
+                self.t -= 1
                 self.process_batch(retro_batch, maxiter=3, _depth=_depth + 1)
 
                 # Mark tasks as reviewed (store the current answer we reviewed against)
@@ -1019,3 +1021,75 @@ class RetroactiveSparseMongoOnlineAlgorithm(SparseMongoOnlineAlgorithm):
         except Exception as e:
             print(f"Error in retroactive updates: {e!s}")
             raise
+
+
+class WeightedOnlineAlgorithm(SparseMongoOnlineAlgorithm):
+    @abstractmethod
+    def _get_workers_weights(
+        self,
+        worker_ids: Iterable[str] | None = None,
+    ) -> dict[str, float]:
+        pass
+
+    def _weighted_vote(
+        self,
+        votes: dict[str, str],
+        worker_weights: dict[str, float],
+    ) -> str:
+        scores = defaultdict(float)
+
+        for worker_id, label in votes.items():
+            weight = worker_weights.get(worker_id, 0.0)
+            scores[label] += weight
+
+        if not scores:
+            raise ValueError("No valid votes")
+
+        return max(scores.items(), key=lambda x: x[1])[0]
+
+    def get_answer(self, task_id: Hashable) -> str:
+        doc = self.db.user_votes.find_one({"_id": task_id})
+        if doc is None:
+            raise TaskNotFoundError(task_id)
+
+        votes = doc["votes"]
+        worker_ids = set(votes.keys())
+
+        worker_weights = self._get_workers_weights(worker_ids)
+        answer = self._weighted_vote(
+            votes=votes,
+            worker_weights=worker_weights,
+        )
+
+        return self._unescape_id(answer)
+
+    def get_answers(self) -> np.ndarray:
+        """Weighted majority voting using raw votes and precomputed worker weights."""
+
+        if self.n_task == 0:
+            raise NotInitialized(self.__class__.__name__)
+
+        # 1) Load worker weights once
+        weights = self._get_workers_weights()
+
+        # 2) Build task_id -> array index mapping from task_mapping
+        rev_task = {
+            doc["_id"]: doc["index"]
+            for doc in self.db.task_mapping.find({}, {"_id": 1, "index": 1})
+        }
+
+        answers = np.zeros(self.n_task, dtype=object)
+
+        # 3) Stream votes from user_votes
+        for doc in self.db.user_votes.find({}, {"votes": 1}):
+            task_id = doc["_id"]
+            votes = doc.get("votes", {})
+
+            try:
+                best = self._weighted_vote(votes, weights)
+                idx = rev_task[task_id]  # use the mapping
+                answers[idx] = self._unescape_id(best)
+            except (ValueError, KeyError):
+                continue  # no valid votes or task not in mapping
+
+        return answers

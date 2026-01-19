@@ -11,6 +11,7 @@ from peerannot.models.aggregation.mongo_online_helpers import (
     EStepResult,
     MStepResult,
     SparseMongoOnlineAlgorithm,
+    WeightedOnlineAlgorithm,
 )
 from peerannot.models.aggregation.online_helpers import (
     OnlineAlgorithm,
@@ -414,3 +415,34 @@ class VectorizedMultinomialBinaryOnlineMongoLogSpace(
         batch_T = np.where(denom > 0, T_scaled / denom, T_scaled)
 
         return EStepResult(batch_T, denom)
+
+
+class WeightedMultinomialBinary(
+    VectorizedMultinomialBinaryOnlineMongoLogSpace,
+    WeightedOnlineAlgorithm,
+):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _get_workers_weights(self, worker_ids=None):
+        pipeline = []
+
+        if worker_ids is not None:
+            pipeline.append({"$match": {"_id": {"$in": list(worker_ids)}}})
+
+        pipeline.append(
+            {
+                "$project": {
+                    "_id": 1,
+                    "weight": "$confusion_matrix.prob",
+                },
+            },
+        )
+
+        return {
+            doc["_id"]: doc["weight"]
+            for doc in self.db.worker_confusion_matrices.aggregate(pipeline)
+        }
+
+
+# %%

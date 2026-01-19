@@ -7,11 +7,15 @@ from pymongo import UpdateOne
 from peerannot.models.aggregation.mongo_online_helpers import (
     MongoOnlineAlgorithm,
     SparseMongoOnlineAlgorithm,
+    WeightedOnlineAlgorithm,
 )
 from peerannot.models.aggregation.online_helpers import (
     OnlineAlgorithm,
 )
-from peerannot.models.aggregation.types import ClassMapping, WorkerMapping
+from peerannot.models.aggregation.types import (
+    ClassMapping,
+    WorkerMapping,
+)
 
 
 class VectorizedDawidSkeneOnlineMongo(SparseMongoOnlineAlgorithm):
@@ -135,7 +139,7 @@ class VectorizedDawidSkeneOnlineMongo(SparseMongoOnlineAlgorithm):
                 (e["from_class"], e["to_class"]): e for e in existing_matrix
             }
 
-            worker_batch_pi = batch_pi[batch_worker_idx]
+            worker_batch_pi = batch_pi[batch_worker_idx].todense()
 
             nz_from, nz_to = np.nonzero(worker_batch_pi > 0)
 
@@ -562,3 +566,46 @@ class DawidSkeneOnline(OnlineAlgorithm):
                 row_sum = self.pi[worker_idx, i_global, :].sum()
                 if row_sum > 0:
                     self.pi[worker_idx, i_global, :] /= row_sum
+
+
+class WeightedDawidSkene(
+    VectorizedDawidSkeneOnlineMongo,
+    WeightedOnlineAlgorithm,
+):
+    """One-step Weighted Majority Voting after Dawid Skene.
+    Use the mean of the diagonal of the confusion matrix as a weight for
+    one-step weighted majority voting."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _get_workers_weights(self, worker_ids=None):
+        pipeline = []
+
+        if worker_ids is not None:
+            pipeline.append({"$match": {"_id": {"$in": list(worker_ids)}}})
+
+        pipeline += [
+            {"$unwind": "$confusion_matrix"},
+            {
+                "$match": {
+                    "$expr": {
+                        "$eq": [
+                            "$confusion_matrix.from_class",
+                            "$confusion_matrix.to_class",
+                        ],
+                    },
+                },
+            },
+            {
+                "$group": {
+                    "_id": "$_id",
+                    "weight": {"$avg": "$confusion_matrix.prob"},
+                },
+            },
+        ]
+
+        return {
+            doc["_id"]: doc["weight"]
+            for doc in self.db.worker_confusion_matrices.aggregate(pipeline)
+        }

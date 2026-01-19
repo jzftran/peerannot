@@ -10,9 +10,13 @@ from peerannot.models.aggregation.mongo_online_helpers import (
     EStepResult,
     MStepResult,
     SparseMongoOnlineAlgorithm,
+    WeightedOnlineAlgorithm,
 )
 from peerannot.models.aggregation.online_helpers import OnlineAlgorithm
-from peerannot.models.aggregation.types import ClassMapping, WorkerMapping
+from peerannot.models.aggregation.types import (
+    ClassMapping,
+    WorkerMapping,
+)
 
 
 class DiagonalMultinomialOnline(OnlineAlgorithm):
@@ -179,7 +183,6 @@ class VectorizedDiagonalMultinomialOnlineMongo(
 
         indices = np.arange(batch_n_classes)
         batch_pi = (pij_all[indices, :, indices] / denom_all_safe).T
-
         return MStepResult(batch_rho, batch_pi)
 
     @profile
@@ -439,3 +442,44 @@ class VectorizedDiagonalMultinomialOnlineMongo(
         pi_batch[:, idx, idx] = pi
 
         return pi_batch
+
+
+class WeightedDiagonalMultinomialOnlineMongo(
+    VectorizedDiagonalMultinomialOnlineMongo,
+    WeightedOnlineAlgorithm,
+):
+    """One-step Weighted Majority Voting after Dawid Skene.
+    Use the mean of the diagonal of the confusion matrix as a weight for
+    one-step weighted majority voting."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _get_workers_weights(self, worker_ids=None):
+        pipeline = []
+
+        if worker_ids is not None:
+            pipeline.append({"$match": {"_id": {"$in": list(worker_ids)}}})
+
+        pipeline = [
+            {
+                "$project": {
+                    "weight": {
+                        "$avg": {
+                            "$map": {
+                                "input": {
+                                    "$objectToArray": "$confusion_matrix",
+                                },
+                                "as": "e",
+                                "in": "$$e.v",
+                            },
+                        },
+                    },
+                },
+            },
+        ]
+
+        return {
+            doc["_id"]: doc["weight"]
+            for doc in self.db.worker_confusion_matrices.aggregate(pipeline)
+        }
