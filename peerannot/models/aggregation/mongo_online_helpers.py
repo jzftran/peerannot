@@ -67,15 +67,22 @@ class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
         decay: Annotated[float, Gt(0)] = 0.6,
         mongo_client: MongoClient | None = None,
         top_k: Annotated[int, Gt(0)] | None = None,
+        db_name: str | None = None,
     ) -> None:
         self.gamma0 = gamma0
         self.decay = decay
         self.t = 0
         self.top_k = top_k
+        self._batch_size = 0
+        self.db_name = db_name
 
         # Initialize MongoDB connection
         self.client = mongo_client or MongoClient("mongodb://localhost:27017/")
-        self.db = self.client[self.__class__.__name__]
+        self.db = (
+            self.client[self.__class__.__name__]
+            if not self.db_name
+            else self.client[self.db_name]
+        )
 
         # Initialize collections if they don't exist
         collections = [
@@ -145,9 +152,21 @@ class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
         return self.task_mapping.count_documents({})
 
     @property
+    def total_task_count(self) -> int:
+        """
+        Returns estimated document count using estimated_document_count()
+        """
+        return self.db.task_mapping.estimated_document_count()
+
+    @property
     def gamma(self) -> float:
         """Compute current step size"""
-        return self.gamma0 / (self.t) ** self.decay
+        if self.total_task_count == 0:
+            return 1.0
+
+        g = self._batch_size / self.total_task_count
+        #  cap gamma  at 1.0 to handle init edge cases
+        return min(1.0, g)
 
     def drop(self):
         self.client.drop_database(self.__class__.__name__)
@@ -341,6 +360,7 @@ class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
         epsilon: float = 1e-6,
     ) -> list[float]:
         """Process a batch with per-batch EM until local convergence."""
+        self._batch_size = len(batch)
         self.t += 1
         batch = apply_func_recursive(batch, self._escape_id)
 
