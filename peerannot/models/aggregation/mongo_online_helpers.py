@@ -40,6 +40,27 @@ if TYPE_CHECKING:
     from peerannot.models.template import AnswersDict
 
 
+def sparse_topk_fast(x: sp.COO, k: int) -> sp.COO:
+    rows, cols = x.coords
+    data = x.data
+
+    order = np.lexsort((-data, rows))  # sort by row, then descending value
+    rows = rows[order]
+    cols = cols[order]
+    data = data[order]
+
+    # keep first k per row
+    unique_rows, counts = np.unique(rows, return_counts=True)
+    offsets = np.repeat(np.cumsum(counts) - counts, counts)
+    mask = np.arange(len(rows)) - offsets < k
+
+    return sp.COO(
+        coords=[rows[mask], cols[mask]],
+        data=data[mask],
+        shape=x.shape,
+    )
+
+
 def apply_func_recursive(d, func):
     if isinstance(d, dict):
         return {func(k): apply_func_recursive(v, func) for k, v in d.items()}
@@ -640,7 +661,7 @@ class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
 
         # Bulk write to rho collection
         if ops:
-            with self.mongo_timer("online update class class priors"):
+            with self.mongo_timer("online update class priors"):
                 self.db.class_priors.bulk_write(ops, ordered=False)
 
     @abstractmethod
@@ -754,7 +775,7 @@ class SparseMongoOnlineAlgorithm(
         top_k: int | None = None,
     ) -> None:
         """
-        If top_k is None -> keep all classes (old behavior).
+        If top_k is None -> keep all classes.
         If top_k is set   -> keep only top_k classes per task.
         """
         scale = 1 - self.gamma
@@ -830,7 +851,7 @@ class SparseMongoOnlineAlgorithm(
             )
 
         if updates:
-            with self.mongo_timer("online update class probs"):
+            with self.mongo_timer("online update task class probs"):
                 self.db.task_class_probs.bulk_write(updates, ordered=False)
             self._normalize_probs(task_names.tolist())
 
