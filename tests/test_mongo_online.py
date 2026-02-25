@@ -8,12 +8,12 @@ import sparse as sp
 from pymongo import UpdateOne
 
 from peerannot.models.aggregation.mongo_online_helpers import (
-    MongoOnlineAlgorithm,
-    SparseMongoOnlineAlgorithm,
+    MongoBatchAlgorithm,
+    SparseMongoBatchAlgorithm,
 )
 
 
-class MongoOnlineTest(MongoOnlineAlgorithm):
+class MongoBatchTest(MongoBatchAlgorithm):
     @property
     def pi(self):
         pass
@@ -28,7 +28,7 @@ class MongoOnlineTest(MongoOnlineAlgorithm):
         pass
 
 
-class SparseMongoOnlineTest(SparseMongoOnlineAlgorithm):
+class SparseMongoBatchTest(SparseMongoBatchAlgorithm):
     """Minimal concrete implementation for testing."""
 
     def pi(self):
@@ -60,7 +60,7 @@ def mock_model():
             self.log_batch_summary = MagicMock()
 
             self.process_batch_matrix = (
-                MongoOnlineTest.process_batch_matrix.__get__(
+                MongoBatchTest.process_batch_matrix.__get__(
                     self,
                 )
             )
@@ -89,12 +89,12 @@ def mock_model_process_em():
             self.log_em_iter = MagicMock()
             self._online_update = MagicMock()
 
-            self._em_loop_on_batch = MongoOnlineTest._em_loop_on_batch.__get__(
+            self._em_loop_on_batch = MongoBatchTest._em_loop_on_batch.__get__(
                 self,
             )
             self.get_or_create_indices = MagicMock()
 
-        process_batch_matrix = MongoOnlineTest.process_batch_matrix
+        process_batch_matrix = MongoBatchTest.process_batch_matrix
 
     return DummyModel()
 
@@ -125,14 +125,14 @@ def repo():
     # in-memory mock mongo client
     client = mongomock.MongoClient()
 
-    return MongoOnlineTest(mongo_client=client)
+    return MongoBatchTest(mongo_client=client)
 
 
 @pytest.fixture
 def repo_sparse():
     client = mongomock.MongoClient()
 
-    return SparseMongoOnlineTest(mongo_client=client)
+    return SparseMongoBatchTest(mongo_client=client)
 
 
 def test_insert_batch_inserts_and_updates(repo):
@@ -173,7 +173,7 @@ def test_insert_batch_inserts_and_updates(repo):
     ],
 )
 def test_escape_replaces_dots(raw, expected):
-    assert MongoOnlineAlgorithm._escape_id(raw) == expected
+    assert MongoBatchAlgorithm._escape_id(raw) == expected
 
 
 @pytest.mark.parametrize(
@@ -186,15 +186,15 @@ def test_escape_replaces_dots(raw, expected):
     ],
 )
 def test_unescape_replaces_marker(escaped, expected):
-    assert MongoOnlineAlgorithm._unescape_id(escaped) == expected
+    assert MongoBatchAlgorithm._unescape_id(escaped) == expected
 
 
 def test_escape_and_unescape_are_inverse():
     ids = ["task.1", "Passiflora spp.", "nodots", ""]
     for i in ids:
         assert (
-            MongoOnlineAlgorithm._unescape_id(
-                MongoOnlineAlgorithm._escape_id(i),
+            MongoBatchAlgorithm._unescape_id(
+                MongoBatchAlgorithm._escape_id(i),
             )
             == i
         )
@@ -203,11 +203,11 @@ def test_escape_and_unescape_are_inverse():
 @pytest.mark.parametrize("value", [123, 0, None, True])
 def test_non_string_inptuts_are_stringified(value):
     # escape should cast non-str to str
-    escaped = MongoOnlineAlgorithm._escape_id(value)
+    escaped = MongoBatchAlgorithm._escape_id(value)
     assert isinstance(escaped, str)
 
     # unescape should also cast to str
-    unescaped = MongoOnlineAlgorithm._unescape_id(value)
+    unescaped = MongoBatchAlgorithm._unescape_id(value)
     assert isinstance(unescaped, str)
 
 
@@ -234,7 +234,7 @@ def test_counts_reflect_documents(repo):
     [
         (1.0, 1, 0.5, 1.0),
         (2.0, 2, 1.0, 1.0),
-        (10.0, 10, 0.5, 10 / (10**0.5)),
+        (10.0, 10, 0.5, 1.0),
     ],
 )
 def test_gamma_computation(repo, gamma0, t, decay, expected):
@@ -549,7 +549,7 @@ def test_process_batch_increments_t_and_calls_process_batch_matrix(
 @pytest.fixture
 def mock_model_process_em():
     client = mongomock.MongoClient()
-    model = MongoOnlineTest(mongo_client=client)
+    model = MongoBatchTest(mongo_client=client)
     model.t = 42
 
     # Mock process_batch_matrix dependencies

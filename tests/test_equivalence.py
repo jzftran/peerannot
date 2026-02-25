@@ -2,43 +2,43 @@ import numpy as np
 import pytest
 import sparse as sp
 
-from peerannot.models.aggregation.dawid_skene_online import (
+from peerannot.models.aggregation.dawid_skene_batch import (
     DawidSkeneMongo,
-    VectorizedDawidSkeneOnlineMongo,
+    VectorizedDawidSkeneBatchMongo,
 )
-from peerannot.models.aggregation.diagonal_multinomial_online import (
-    DiagonalMultinomialOnline,
-    VectorizedDiagonalMultinomialOnlineMongo,
+from peerannot.models.aggregation.diagonal_multinomial_batch import (
+    DiagonalMultinomialBatch,
+    VectorizedDiagonalMultinomialBatchMongo,
 )
 from peerannot.models.aggregation.flat_single_binomial_online import (
-    FlatSingleBinomialOnline,
-    VectorizedFlatSingleBinomialOnlineMongo,
+    FlatSingleBinomialBatch,
+    VectorizedFlatSingleBinomialBatchMongo,
 )
-from peerannot.models.aggregation.multinomial_binary_online import (
-    MultinomialBinaryOnline,
-    MultinomialBinaryOnlineLogSpace,
-    VectorizedMultinomialBinaryOnlineMongo,
-    VectorizedMultinomialBinaryOnlineMongoLogSpace,
+from peerannot.models.aggregation.multinomial_binary_batch import (
+    MultinomialBinaryBatch,
+    MultinomialBinaryBatchLogSpace,
+    VectorizedMultinomialBinaryBatchMongo,
+    VectorizedMultinomialBinaryBatchMongoLogSpace,
 )
-from peerannot.models.aggregation.pooled_diagonal_multinomial_online import (
-    PooledDiagonalMultinomialOnline,
-    VectorizedPooledDiagonalMultinomialOnlineMongo,
+from peerannot.models.aggregation.pooled_diagonal_multinomial_batch import (
+    PooledDiagonalMultinomialBatch,
+    VectorizedPooledDiagonalMultinomialBatchMongo,
 )
-from peerannot.models.aggregation.pooled_flat_diagonal_online import (
-    VectorizedPooledFlatDiagonalOnline,
-    VectorizedPooledFlatDiagonalOnlineMongo,
+from peerannot.models.aggregation.pooled_flat_diagonal_batch import (
+    VectorizedPooledFlatDiagonalBatch,
+    VectorizedPooledFlatDiagonalBatchMongo,
 )
-from peerannot.models.aggregation.pooled_flat_single_binomial_online import (
-    PooledFlatSingleBinomialOnline,
-    VectorizedPooledFlatSingleBinomialOnlineMongo,
+from peerannot.models.aggregation.pooled_flat_single_binomial_batch import (
+    PooledFlatSingleBinomialBatch,
+    VectorizedPooledFlatSingleBinomialBatchMongo,
 )
-from peerannot.models.aggregation.pooled_multinomial_binary_online import (
-    PooledMultinomialBinaryOnline,
-    VectorizedPooledMultinomialBinaryOnlineMongo,
+from peerannot.models.aggregation.pooled_multinomial_batch import (
+    PooledMultinomialBatch,
+    VectorizedPooledMultinomialBatchMongo,
 )
-from peerannot.models.aggregation.pooled_multinomial_online import (
-    PooledMultinomialOnline,
-    VectorizedPooledMultinomialOnlineMongo,
+from peerannot.models.aggregation.pooled_multinomial_binary_batch import (
+    PooledMultinomialBinaryBatch,
+    VectorizedPooledMultinomialBinaryBatchMongo,
 )
 
 
@@ -58,36 +58,36 @@ def random_data():
 
 # pairs of equivalent models
 MODEL_PAIRS = [
-    (PooledMultinomialOnline, VectorizedPooledMultinomialOnlineMongo),
-    (FlatSingleBinomialOnline, VectorizedFlatSingleBinomialOnlineMongo),
-    (DiagonalMultinomialOnline, VectorizedDiagonalMultinomialOnlineMongo),
+    (PooledMultinomialBatch, VectorizedPooledMultinomialBatchMongo),
+    (FlatSingleBinomialBatch, VectorizedFlatSingleBinomialBatchMongo),
+    (DiagonalMultinomialBatch, VectorizedDiagonalMultinomialBatchMongo),
     (
-        MultinomialBinaryOnline,
-        VectorizedMultinomialBinaryOnlineMongo,
+        MultinomialBinaryBatch,
+        VectorizedMultinomialBinaryBatchMongo,
     ),
     (
-        VectorizedPooledFlatDiagonalOnline,
-        VectorizedPooledFlatDiagonalOnlineMongo,
+        VectorizedPooledFlatDiagonalBatch,
+        VectorizedPooledFlatDiagonalBatchMongo,
     ),
     (
-        PooledDiagonalMultinomialOnline,
-        VectorizedPooledDiagonalMultinomialOnlineMongo,
+        PooledDiagonalMultinomialBatch,
+        VectorizedPooledDiagonalMultinomialBatchMongo,
     ),
     (
-        PooledFlatSingleBinomialOnline,
-        VectorizedPooledFlatSingleBinomialOnlineMongo,
+        PooledFlatSingleBinomialBatch,
+        VectorizedPooledFlatSingleBinomialBatchMongo,
     ),
     (
-        PooledMultinomialBinaryOnline,
-        VectorizedPooledMultinomialBinaryOnlineMongo,
+        PooledMultinomialBinaryBatch,
+        VectorizedPooledMultinomialBinaryBatchMongo,
     ),
     (
         DawidSkeneMongo,
-        VectorizedDawidSkeneOnlineMongo,
+        VectorizedDawidSkeneBatchMongo,
     ),
     (
-        MultinomialBinaryOnlineLogSpace,
-        VectorizedMultinomialBinaryOnlineMongoLogSpace,
+        MultinomialBinaryBatchLogSpace,
+        VectorizedMultinomialBinaryBatchMongoLogSpace,
     ),
 ]
 

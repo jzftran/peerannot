@@ -4,8 +4,8 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from peerannot.models.aggregation.pooled_multinomial_online import (
-    VectorizedPooledMultinomialOnlineMongo,
+from peerannot.models.aggregation.pooled_multinomial_batch import (
+    VectorizedPooledMultinomialBatchMongo,
 )
 
 
@@ -795,11 +795,11 @@ batch1 = {
     "task_D": {"user_002": "Betula pendula", "user_005": "Acer platanoides"},
 }
 visualize_model(
-    model=VectorizedPooledMultinomialOnlineMongo,
+    model=VectorizedPooledMultinomialBatchMongo,
     maxiter=50,
     batches=[batch1],
 )
 
 
-model = VectorizedPooledMultinomialOnlineMongo()
+model = VectorizedPooledMultinomialBatchMongo()
 model.pi

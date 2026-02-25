@@ -1,6 +1,8 @@
 # %%
 from __future__ import annotations
 
+import time
+import warnings
 from typing import Annotated
 
 import numpy as np
@@ -8,24 +10,26 @@ import sparse as sp
 from annotated_types import Ge, Gt
 from line_profiler import profile
 from pymongo import UpdateOne
+from tqdm import tqdm
 
 from peerannot.models.aggregation.mongo_online_helpers import (
-    MongoOnlineAlgorithm,
-    SparseMongoOnlineAlgorithm,
-    WeightedOnlineAlgorithm,
+    MongoBatchAlgorithm,
+    SparseMongoBatchAlgorithm,
+    WeightedBatchAlgorithm,
     sparse_topk_fast,
 )
 from peerannot.models.aggregation.online_helpers import (
-    OnlineAlgorithm,
+    BatchAlgorithm,
 )
 from peerannot.models.aggregation.types import (
     ClassMapping,
     TaskMapping,
     WorkerMapping,
 )
+from peerannot.models.aggregation.warnings_errors import DidNotConverge
 
 
-class VectorizedDawidSkeneOnlineMongo(SparseMongoOnlineAlgorithm):
+class VectorizedDawidSkeneBatchMongo(SparseMongoBatchAlgorithm):
     def _e_step(self, batch_matrix, batch_pi, batch_rho):
         powered = np.power(
             batch_pi[np.newaxis, :, :, :],
@@ -126,64 +130,93 @@ class VectorizedDawidSkeneOnlineMongo(SparseMongoOnlineAlgorithm):
     ) -> None:
         gamma = self.gamma
         scale = 1.0 - gamma
+        n_classes = len(class_mapping)
+
+        if n_classes == 0:
+            return
+
+        # Build reverse class mapping (deterministic)
+        idx_to_class = np.empty(n_classes, dtype=object)
+        for cls, idx in class_mapping.items():
+            idx_to_class[idx] = cls
+
         updates = []
 
+        # Extract sparse batch entries
+        if hasattr(batch_pi, "coords") and hasattr(batch_pi, "data"):
+            w_b, i_b, j_b = batch_pi.coords
+            p_b = batch_pi.data
+        else:
+            dense = np.asarray(batch_pi)
+            w_b, i_b, j_b = np.nonzero(dense > 0)
+            p_b = dense[w_b, i_b, j_b]
+
+        # Group batch entries per worker
+        batch_per_worker = {}
+        for w, i, j, p in zip(w_b, i_b, j_b, p_b):
+            batch_per_worker.setdefault(w, []).append((i, j, p))
+
+        # Fetch existing matrices
         worker_ids = list(worker_mapping.keys())
-
-        worker_cursor = self.db.worker_confusion_matrices.find(
-            {"_id": {"$in": worker_ids}},
-            {"confusion_matrix": 1},
-        )
-
-        worker_conf = {
+        existing_docs = {
             doc["_id"]: doc.get("confusion_matrix", [])
-            for doc in worker_cursor
+            for doc in self.db.worker_confusion_matrices.find(
+                {"_id": {"$in": worker_ids}},
+                {"confusion_matrix": 1},
+            )
         }
 
-        for worker_name, batch_worker_idx in worker_mapping.items():
-            existing_matrix = worker_conf.get(worker_name, [])
+        # Process each worker independently
+        for worker_name, worker_idx in worker_mapping.items():
+            existing = existing_docs.get(worker_name, [])
 
-            entry_dict = {
-                (e["from_class"], e["to_class"]): e for e in existing_matrix
-            }
+            # Build dict[(from_idx, to_idx)] -> prob
+            matrix = {}
 
-            worker_batch_pi = batch_pi[batch_worker_idx].todense()
+            for entry in existing:
+                from_idx = class_mapping.get(entry["from_class"])
+                to_idx = class_mapping.get(entry["to_class"])
 
-            nz_from, nz_to = np.nonzero(worker_batch_pi > 0)
-
-            for i, j in zip(nz_from, nz_to):
-                batch_prob = worker_batch_pi[i, j]
-                from_class = self._reverse_class_mapping.get(i)
-                to_class = self._reverse_class_mapping.get(j)
-                if from_class is None or to_class is None:
+                if from_idx is None or to_idx is None:
                     continue
 
-                key = (from_class, to_class)
-                if key in entry_dict:
-                    # update existing
-                    entry_dict[key]["prob"] = (
-                        scale * entry_dict[key]["prob"] + gamma * batch_prob
+                matrix[(from_idx, to_idx)] = scale * float(entry["prob"])
+
+            for i, j, p in batch_per_worker.get(worker_idx, []):
+                key = (i, j)
+                matrix[key] = matrix.get(key, 0.0) + gamma * float(p)
+
+            if not matrix:
+                updates.append(
+                    UpdateOne(
+                        {"_id": worker_name},
+                        {"$set": {"confusion_matrix": []}},
+                        upsert=True,
+                    ),
+                )
+                continue
+
+            rows = {}
+            for (i, j), p in matrix.items():
+                rows.setdefault(i, []).append((j, p))
+
+            updated_matrix = []
+
+            for i, entries in rows.items():
+                total = sum(p for _, p in entries)
+                if total <= 0:
+                    continue
+
+                from_class = idx_to_class[i]
+
+                for j, p in entries:
+                    updated_matrix.append(
+                        {
+                            "from_class": from_class,
+                            "to_class": idx_to_class[j],
+                            "prob": float(p / total),
+                        },
                     )
-                else:
-                    # add new
-                    entry_dict[key] = {
-                        "from_class": from_class,
-                        "to_class": to_class,
-                        "prob": gamma * batch_prob,
-                    }
-
-            # Normalize per from_class
-            updated_matrix = list(entry_dict.values())
-            from_class_entries = {}
-            for e in updated_matrix:
-                from_class_entries.setdefault(e["from_class"], []).append(e)
-
-            for fc, entries in from_class_entries.items():
-                row_sum = sum(e["prob"] for e in entries)
-                if row_sum > 0:
-                    inv_sum = 1.0 / row_sum
-                    for e in entries:
-                        e["prob"] *= inv_sum
 
             updates.append(
                 UpdateOne(
@@ -201,7 +234,144 @@ class VectorizedDawidSkeneOnlineMongo(SparseMongoOnlineAlgorithm):
                 )
 
 
-class DawidSkeneMongo(MongoOnlineAlgorithm):
+class D2(VectorizedDawidSkeneBatchMongo):
+    @profile
+    def _load_rho_from_db(self, class_mapping: dict[str, int]) -> np.ndarray:
+        n_classes = len(class_mapping)
+        rho = np.zeros(n_classes, dtype=np.float64)
+
+        class_ids = list(class_mapping.keys())
+        cursor = self.db.class_priors.find(
+            {"_id": {"$in": class_ids}},
+            {"_id": 1, "prob": 1},
+        )
+        for doc in cursor:
+            cls_id = doc["_id"]
+            idx = class_mapping.get(cls_id)
+            if idx is not None:
+                rho[idx] = float(doc.get("prob", 0.0))
+
+        total = rho.sum()
+        if total > 0:
+            missing = rho == 0
+            if np.any(missing):
+                rho[missing] = 1e-12
+                total = rho.sum()
+            rho /= total
+        else:
+            rho[:] = 1.0 / n_classes
+
+        return sp.COO(rho)
+
+    @profile
+    def _load_pi_from_db(
+        self,
+        worker_ids: list[str],
+        class_mapping: dict[str, int],
+    ) -> np.ndarray:
+        n_workers = len(worker_ids)
+        n_classes = len(class_mapping)
+
+        pi = np.zeros((n_workers, n_classes, n_classes), dtype=np.float64)
+        if n_workers == 0:
+            return pi
+
+        worker_to_idx = {w: i for i, w in enumerate(worker_ids)}
+
+        cursor = self.db.worker_confusion_matrices.find(
+            {"_id": {"$in": worker_ids}},
+            {"_id": 1, "confusion_matrix": 1},
+        )
+        for doc in cursor:
+            w_name = doc["_id"]
+            w_idx = worker_to_idx.get(w_name)
+            if w_idx is None:
+                continue
+
+            for e in doc.get("confusion_matrix", []):
+                from_cls = e.get("from_class")
+                to_cls = e.get("to_class")
+                l_idx = class_mapping.get(from_cls)
+                k_idx = class_mapping.get(to_cls)
+                if l_idx is None or k_idx is None:
+                    continue
+                pi[w_idx, l_idx, k_idx] = float(e.get("prob", 0.0))
+
+        row_sums = pi.sum(axis=2, keepdims=True)
+        zero_rows = row_sums == 0
+        if n_classes > 0:
+            pi[zero_rows.repeat(n_classes, axis=2)] = 1.0 / n_classes
+
+        return sp.COO(pi)
+
+    def _em_loop_on_batch(
+        self,
+        batch_matrix: np.ndarray,
+        task_mapping: TaskMapping,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
+        epsilon: Annotated[float, Ge(0)] = 1e-6,
+        maxiter: Annotated[int, Gt(0)] = 50,
+    ) -> list[float]:
+        i = 0
+        eps = np.inf
+        ll: list[float] = []
+        # batch_T = self._init_T(
+        #     batch_matrix,
+        #     task_mapping,
+        #     class_mapping,
+        # )
+        batch_pi = self._load_pi_from_db(
+            list(worker_mapping.values()),
+            class_mapping,
+        )
+        batch_rho = self._load_rho_from_db(class_mapping)
+        pbar = tqdm(total=maxiter, desc=self.__class__.__name__)
+        while i < maxiter and eps > epsilon:
+            iter_start = time.perf_counter()
+
+            batch_T, batch_denom_e_step = self._e_step(
+                batch_matrix,
+                batch_pi,
+                batch_rho,
+            )
+            batch_rho, batch_pi = self._m_step(batch_matrix, batch_T)
+
+            likeli = np.log(np.sum(batch_denom_e_step))
+            ll.append(likeli)
+            if i > 0:
+                eps = np.abs((ll[-1] - ll[-2]) / (np.abs(ll[-2]) + 1e-12))
+
+            iter_time = time.perf_counter() - iter_start
+
+            self.log_em_iter(i, likeli, eps, iter_time)
+            pbar.update(1)
+            i += 1
+
+        pbar.set_description("Finished")
+        pbar.close()
+        self.c = i
+
+        if eps > epsilon:
+            warnings.warn(
+                DidNotConverge(self.__class__.__name__, eps, epsilon),
+                stacklevel=2,
+            )
+
+        # Online updates
+        self._online_update(
+            task_mapping,
+            worker_mapping,
+            class_mapping,
+            batch_T,
+            batch_rho,
+            batch_pi,
+        )
+
+        return ll
+
+
+class DawidSkeneMongo(MongoBatchAlgorithm):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
@@ -424,7 +594,7 @@ class DawidSkeneMongo(MongoOnlineAlgorithm):
             )
 
 
-class DawidSkeneOnline(OnlineAlgorithm):
+class DawidSkeneBatch(BatchAlgorithm):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
@@ -577,8 +747,8 @@ class DawidSkeneOnline(OnlineAlgorithm):
 
 
 class WeightedDawidSkene(
-    VectorizedDawidSkeneOnlineMongo,
-    WeightedOnlineAlgorithm,
+    VectorizedDawidSkeneBatchMongo,
+    WeightedBatchAlgorithm,
 ):
     """One-step Weighted Majority Voting after Dawid Skene.
     Use the mean of the diagonal of the confusion matrix as a weight for
@@ -619,7 +789,7 @@ class WeightedDawidSkene(
         }
 
 
-class OnlineDawidSkene(VectorizedDawidSkeneOnlineMongo):
+class OnlineDawidSkene(VectorizedDawidSkeneBatchMongo):
     """
     Cappé-style online EM:
     For each task, update sufficient statistics with a stochastic
@@ -628,7 +798,8 @@ class OnlineDawidSkene(VectorizedDawidSkeneOnlineMongo):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._online_step: int | None = None
+        self.n_processed = 0
+        self._total_task_count = 0
 
     def _init_T(
         self,
@@ -653,7 +824,7 @@ class OnlineDawidSkene(VectorizedDawidSkeneOnlineMongo):
         top_k: int | None = None,
     ) -> None:
         """
-        Update running task-class sufficient statistics using online EM:
+        Update running task-class sufficient statistics using Batch EM:
             S_{n+1, l} = (1-gamma) S_{n, l} + gamma * T_{n+1, l}
         top_k is applied **only to limit computation**, not to forget other classes.
         """
@@ -973,7 +1144,6 @@ class OnlineDawidSkene(VectorizedDawidSkeneOnlineMongo):
 
         row_sums = pi.sum(axis=2, keepdims=True)
         zero_rows = row_sums == 0
-        pi = np.divide(pi, row_sums, out=np.zeros_like(pi), where=row_sums > 0)
         if n_classes > 0:
             pi[zero_rows.repeat(n_classes, axis=2)] = 1.0 / n_classes
 
@@ -1099,6 +1269,42 @@ class OnlineDawidSkene(VectorizedDawidSkeneOnlineMongo):
             top_k=self.top_k,
         )
 
+    @property
+    def total_task_count(self) -> int:
+        """
+        Returns the total task count. If manually set, use that value.
+        Otherwise, use estimated_document_count().
+        """
+        return (
+            self._total_task_count
+            if self._total_task_count is not None
+            else self.db.task_mapping.estimated_document_count()
+        )
+
+    @total_task_count.setter
+    def total_task_count(self, value: int):
+        """
+        Allows manual setting of the total task count.
+        """
+        self._total_task_count = value
+
+    # @property
+    # def gamma(self) -> float:
+    #     """Compute current step size"""
+    #     if self.total_task_count == 0:
+    #         return 1.0
+
+    #     g = self._batch_size / self.total_task_count
+    #     #  cap gamma  at 1.0 to handle init edge cases
+    #     return min(1.0, g)
+
+    @property
+    def gamma(self):
+        n = self.total_task_count
+        tau = 1000
+        kappa = 0.6
+        return (n + tau) ** -kappa
+
     def _em_loop_on_batch(
         self,
         batch_matrix: np.ndarray | sp.COO,
@@ -1113,7 +1319,6 @@ class OnlineDawidSkene(VectorizedDawidSkeneOnlineMongo):
         Interface preserved, but EM iterations are disabled by design.
         """
         _ = epsilon, maxiter
-
         self._batch_size = 1
 
         ll: list[float] = []
@@ -1136,62 +1341,56 @@ class OnlineDawidSkene(VectorizedDawidSkeneOnlineMongo):
             batch_matrix,
         )
 
+        global_reverse_task_mapping = self._reverse_task_mapping.copy()
+        global_reverse_worker_mapping = self._reverse_worker_mapping.copy()
+        global_reverse_class_mapping = self._reverse_class_mapping.copy()
+
         # TODO add avg_pi
         for batch_task_idx in task_mapping.values():
-            # --- extract task-specific data ---
+            self.total_task_count += 1
+            task_name = global_reverse_task_mapping[batch_task_idx]
+            task_votes: dict[str, str] = {}
+
+            # --- extract task-specific votes from matrix ---
             if isinstance(batch_matrix, sp.COO):
                 mask = batch_matrix.coords[0] == batch_task_idx
                 task_w = batch_matrix.coords[1][mask]
                 task_k = batch_matrix.coords[2][mask]
-
-                uniq_workers = np.unique(task_w)
-                worker_ids_task = [
-                    self._reverse_worker_mapping[int(w)] for w in uniq_workers
-                ]
-                worker_to_local_task = {
-                    int(w): i for i, w in enumerate(uniq_workers)
-                }
-
-                task_classes = np.unique(task_k)
-                class_mapping_task = {
-                    self._reverse_class_mapping[int(c)]: i
-                    for i, c in enumerate(task_classes)
-                }
-
-                task_matrix = np.zeros(
-                    (1, len(uniq_workers), len(task_classes)),
-                    dtype=bool,
-                )
-                task_matrix[
-                    0,
-                    [worker_to_local_task[int(w)] for w in task_w],
-                    [
-                        class_mapping_task[self._reverse_class_mapping[int(k)]]
-                        for k in task_k
-                    ],
-                ] = True
-
             else:
                 row = batch_matrix[batch_task_idx]
                 worker_mask = row.sum(axis=1) > 0
                 worker_idxs = np.where(worker_mask)[0]
-                worker_ids_task = [
-                    self._reverse_worker_mapping[int(w)] for w in worker_idxs
-                ]
+                task_w = []
+                task_k = []
+                for worker_idx in worker_idxs:
+                    class_indices = np.flatnonzero(row[worker_idx])
+                    if class_indices.size == 0:
+                        continue
+                    task_w.append(int(worker_idx))
+                    task_k.append(int(class_indices[0]))
 
-                task_classes = np.nonzero(row.sum(axis=0))[0]
-                class_mapping_task = {
-                    self._reverse_class_mapping[int(c)]: i
-                    for i, c in enumerate(task_classes)
-                }
+            for w, k in zip(task_w, task_k):
+                worker_id = global_reverse_worker_mapping[int(w)]
+                class_id = global_reverse_class_mapping[int(k)]
+                task_votes[worker_id] = class_id
 
-                task_matrix = row[worker_idxs][:, task_classes][
-                    None,
-                    :,
-                    :,
-                ]  # add batch dim
-
-            task_matrix = sp.COO(task_matrix)
+            task_batch = {task_name: task_votes}
+            task_mapping_task: TaskMapping = {}
+            worker_mapping_task: WorkerMapping = {}
+            class_mapping_task: ClassMapping = {}
+            self._prepare_mapping(
+                task_batch,
+                task_mapping_task,
+                worker_mapping_task,
+                class_mapping_task,
+            )
+            task_matrix = self._process_batch_to_matrix(
+                task_batch,
+                task_mapping_task,
+                worker_mapping_task,
+                class_mapping_task,
+            )
+            worker_ids_task = list(worker_mapping_task.keys())
 
             # --- load global pi/rho but restricted to task-specific classes/workers ---
             batch_rho = self._load_rho_from_db(class_mapping_task)
@@ -1207,30 +1406,13 @@ class OnlineDawidSkene(VectorizedDawidSkeneOnlineMongo):
                 batch_rho,
             )
 
-            # update T
-            task_name = self._reverse_task_mapping[batch_task_idx]
-            task_mapping_task_single = {task_name: batch_task_idx}
-            batch_T_update = np.zeros(
-                (len(task_mapping), len(class_mapping)),
-                dtype=np.float64,
-            )
-            for cls_name, idx in class_mapping_task.items():
-                global_idx = class_mapping[
-                    cls_name
-                ]  # map task-local -> global index
-                batch_T_update[batch_task_idx, global_idx] = batch_T[0, idx]
-
             self._online_update_T(
-                task_mapping_task_single,
-                class_mapping,
-                sp.COO(batch_T_update),
+                task_mapping_task,
+                class_mapping_task,
+                sp.COO(batch_T),
                 self.top_k,
             )
 
-            # m-step: update only task-specific workers
-            worker_mapping_task = {
-                worker_id: i for i, worker_id in enumerate(worker_ids_task)
-            }
             self._online_update_sufficient_statistics(
                 worker_mapping_task,
                 class_mapping_task,
@@ -1246,40 +1428,9 @@ class OnlineDawidSkene(VectorizedDawidSkeneOnlineMongo):
 
             likeli = float(np.sum(np.log(batch_denom_e_step + 1e-12)))
             ll.append(likeli)
+
+        self._reverse_task_mapping = global_reverse_task_mapping
+        self._reverse_worker_mapping = global_reverse_worker_mapping
+        self._reverse_class_mapping = global_reverse_class_mapping
+
         return ll
-
-
-batch1 = {
-    "task_1": {
-        "user_1": "pine",
-        "user_2": "pine",
-        "user_3": "pine",
-        "user_4": "pine",
-    },
-    "task_2": {"user_5": "oak", "user_6": "maple", "user_7": "maple"},
-    "task_3": {
-        "user_0": "oak",
-        "user_2": "maple",
-        "user_5": "cedar",
-    },
-}
-
-batch2 = {
-    "task_1": {"user_0": "oak"},
-    "task_4": {"user_1": "pine"},
-    "task_5": {"user_2": "maple"},
-}
-
-m = OnlineDawidSkene(top_k=5)
-m.drop()
-m.process_batch(batch1)
-m.process_batch(batch2)
-
-for x in m.db.worker_sufficient_statistics.find({}):
-    print(x)
-
-m.get_answers()
-m.pi
-
-m.db.task_class_probs.find_one({"_id": "task_1"})
-# %%

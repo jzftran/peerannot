@@ -30,7 +30,7 @@ All aggregation-based strategies are available running:
     Wawa.Wawa
     IWMV.IWMV
     dawid_skene.DawidSkene
-    dawid_skene_online.DawidSkeneOnline
+    dawid_skene_batch.DawidSkeneBatch
     dawid_skene_retroactive.DawidSkeneRetroactive
     multinomial_binary.MultinomialBinary
     pooled_diagonal_multinomial.PooledDiagonalMultinomial

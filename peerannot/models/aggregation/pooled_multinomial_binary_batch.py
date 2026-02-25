@@ -11,10 +11,10 @@ from pydantic import validate_call
 from peerannot.models.aggregation.mongo_online_helpers import (
     EStepResult,
     MStepResult,
-    SparseMongoOnlineAlgorithm,
+    SparseMongoBatchAlgorithm,
 )
 from peerannot.models.aggregation.online_helpers import (
-    OnlineAlgorithm,
+    BatchAlgorithm,
 )
 
 if TYPE_CHECKING:
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 import sparse as sp
 
 
-class PooledMultinomialBinaryOnline(OnlineAlgorithm):
+class PooledMultinomialBinaryBatch(BatchAlgorithm):
     @validate_call
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -117,7 +117,7 @@ class PooledMultinomialBinaryOnline(OnlineAlgorithm):
         self.pi = self.pi + self.gamma * (batch_pi - self.pi)
 
 
-class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
+class VectorizedPooledMultinomialBinaryBatchMongo(SparseMongoBatchAlgorithm):
     """Vectorized pooled multinomial binary online algorithm using sparse matrices and mongo."""
 
     @validate_call
@@ -285,8 +285,8 @@ class VectorizedPooledMultinomialBinaryOnlineMongo(SparseMongoOnlineAlgorithm):
         return full_pi
 
 
-class VectorizedPooledMultinomialBinaryOnlineMongoLogSpace(
-    VectorizedPooledMultinomialBinaryOnlineMongo,
+class VectorizedPooledMultinomialBinaryBatchMongoLogSpace(
+    VectorizedPooledMultinomialBinaryBatchMongo,
 ):
     @profile
     def _e_step(

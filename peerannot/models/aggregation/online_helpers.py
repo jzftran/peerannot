@@ -255,7 +255,7 @@ def limit_recursion(max_depth: int):
     return decorator
 
 
-class OnlineAlgorithm(ABC):
+class BatchAlgorithm(ABC):
     @validate_call
     def __init__(
         self,
@@ -836,7 +836,7 @@ def validate_recursion_limit(recursion_limit: Annotated[int, Ge(0)] = 5):
     return recursion_limit
 
 
-class RetroactiveAlgorithm(OnlineAlgorithm):
+class RetroactiveAlgorithm(BatchAlgorithm):
     def __init__(
         self,
         recursion_limit: Annotated[int, Ge(0)] = 5,

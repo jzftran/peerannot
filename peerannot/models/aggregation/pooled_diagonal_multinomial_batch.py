@@ -8,13 +8,13 @@ from pydantic import validate_call
 from peerannot.models.aggregation.mongo_online_helpers import (
     EStepResult,
     MStepResult,
-    SparseMongoOnlineAlgorithm,
+    SparseMongoBatchAlgorithm,
 )
-from peerannot.models.aggregation.online_helpers import OnlineAlgorithm
+from peerannot.models.aggregation.online_helpers import BatchAlgorithm
 from peerannot.models.aggregation.types import ClassMapping, WorkerMapping
 
 
-class PooledDiagonalMultinomialOnline(OnlineAlgorithm):
+class PooledDiagonalMultinomialBatch(BatchAlgorithm):
     @validate_call
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -107,8 +107,8 @@ class PooledDiagonalMultinomialOnline(OnlineAlgorithm):
         return batch_T, batch_denom_e_step
 
 
-class VectorizedPooledDiagonalMultinomialOnlineMongo(
-    SparseMongoOnlineAlgorithm,
+class VectorizedPooledDiagonalMultinomialBatchMongo(
+    SparseMongoBatchAlgorithm,
 ):
     """Vectorized pooled diagonal multinomial binary online algorithm
     using sparse matrices and mongo."""

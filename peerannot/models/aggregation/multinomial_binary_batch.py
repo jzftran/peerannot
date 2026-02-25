@@ -10,11 +10,11 @@ from pymongo import UpdateOne
 from peerannot.models.aggregation.mongo_online_helpers import (
     EStepResult,
     MStepResult,
-    SparseMongoOnlineAlgorithm,
-    WeightedOnlineAlgorithm,
+    SparseMongoBatchAlgorithm,
+    WeightedBatchAlgorithm,
 )
 from peerannot.models.aggregation.online_helpers import (
-    OnlineAlgorithm,
+    BatchAlgorithm,
 )
 from peerannot.models.aggregation.types import (
     ClassMapping,
@@ -22,7 +22,7 @@ from peerannot.models.aggregation.types import (
 )
 
 
-class MultinomialBinaryOnline(OnlineAlgorithm):
+class MultinomialBinaryBatch(BatchAlgorithm):
     @validate_call
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -114,7 +114,7 @@ class MultinomialBinaryOnline(OnlineAlgorithm):
         return batch_T, batch_denom_e_step
 
 
-class MultinomialBinaryOnlineLogSpace(MultinomialBinaryOnline):
+class MultinomialBinaryBatchLogSpace(MultinomialBinaryBatch):
     def _e_step(
         self,
         batch_matrix: np.ndarray,
@@ -164,8 +164,8 @@ class MultinomialBinaryOnlineLogSpace(MultinomialBinaryOnline):
         return batch_T, denom
 
 
-class VectorizedMultinomialBinaryOnlineMongo(
-    SparseMongoOnlineAlgorithm,
+class VectorizedMultinomialBinaryBatchMongo(
+    SparseMongoBatchAlgorithm,
 ):
     @validate_call
     def __init__(self, **kwargs) -> None:
@@ -365,8 +365,8 @@ class VectorizedMultinomialBinaryOnlineMongo(
         return pi_batch
 
 
-class VectorizedMultinomialBinaryOnlineMongoLogSpace(
-    VectorizedMultinomialBinaryOnlineMongo,
+class VectorizedMultinomialBinaryBatchMongoLogSpace(
+    VectorizedMultinomialBinaryBatchMongo,
 ):
     @profile
     def _e_step(
@@ -418,8 +418,8 @@ class VectorizedMultinomialBinaryOnlineMongoLogSpace(
 
 
 class WeightedMultinomialBinary(
-    VectorizedMultinomialBinaryOnlineMongoLogSpace,
-    WeightedOnlineAlgorithm,
+    VectorizedMultinomialBinaryBatchMongoLogSpace,
+    WeightedBatchAlgorithm,
 ):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

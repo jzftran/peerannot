@@ -19,7 +19,7 @@ from line_profiler import profile
 from pymongo import MongoClient, UpdateOne
 from tqdm import tqdm
 
-from peerannot.helpers.logging import OnlineMongoLoggingMixin
+from peerannot.helpers.logging import BatchMongoLoggingMixin
 from peerannot.models.aggregation.online_helpers import (
     validate_recursion_limit,
 )
@@ -77,10 +77,10 @@ class MStepResult(NamedTuple):
     batch_pi: np.ndarray | sp.COO
 
 
-class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
-    """Batch EM is the same as in OnlineAlgorithm.
+class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
+    """Batch EM is the same as in BatchAlgorithm.
     Global rho, pi and T are stored sparsly in MongoDB.
-    used in class SparseMongoOnlineAlgorithm"""
+    used in class SparseMongoBatchAlgorithm"""
 
     def __init__(
         self,
@@ -691,12 +691,12 @@ class MongoOnlineAlgorithm(ABC, OnlineMongoLoggingMixin):
         pass
 
 
-class SparseMongoOnlineAlgorithm(
-    MongoOnlineAlgorithm,
+class SparseMongoBatchAlgorithm(
+    MongoBatchAlgorithm,
 ):
-    """Batch EM is the same as in OnlineAlgorithm.
+    """Batch EM is the same as in BatchAlgorithm.
     Global rho, pi and T are stored sparsly in MongoDB.
-    used in class SparseMongoOnlineAlgorithm"""
+    used in class SparseMongoBatchAlgorithm"""
 
     @profile
     def __init__(self, *args, **kwargs) -> None:
@@ -882,7 +882,7 @@ class SparseMongoOnlineAlgorithm(
         pass
 
 
-class RetroactiveSparseMongoOnlineAlgorithm(SparseMongoOnlineAlgorithm):
+class RetroactiveSparseMongoBatchAlgorithm(SparseMongoBatchAlgorithm):
     def __init__(
         self,
         recursion_limit: Annotated[int, Ge(0)] = 5,
@@ -1064,7 +1064,7 @@ class RetroactiveSparseMongoOnlineAlgorithm(SparseMongoOnlineAlgorithm):
             raise
 
 
-class WeightedOnlineAlgorithm(SparseMongoOnlineAlgorithm):
+class WeightedBatchAlgorithm(SparseMongoBatchAlgorithm):
     @abstractmethod
     def _get_workers_weights(
         self,
