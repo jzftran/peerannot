@@ -702,6 +702,23 @@ class SparseMongoBatchAlgorithm(
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
+    def _apply_topk(
+        self,
+        T: sp.COO | np.ndarray,
+        top_k: int | None,
+    ) -> sp.COO | np.ndarray:
+        if top_k is None or top_k >= T.shape[1]:
+            return T
+
+        if isinstance(T, sp.COO):
+            return sparse_topk_fast(T, top_k)
+
+        idx = np.argpartition(T, -top_k, axis=1)[:, -top_k:]
+        mask = np.zeros_like(T, dtype=bool)
+        rows = np.arange(T.shape[0])[:, None]
+        mask[rows, idx] = True
+        return np.where(mask, T, 0.0)
+
     @profile
     def _process_batch_to_matrix(
         self,
@@ -818,12 +835,7 @@ class SparseMongoBatchAlgorithm(
 
         probs_matrix = existing + block
 
-        if top_k is not None and top_k < probs_matrix.shape[1]:
-            idx = np.argpartition(probs_matrix, -top_k, axis=1)[:, -top_k:]
-            mask = np.zeros_like(probs_matrix, dtype=bool)
-            rows = np.arange(len(uniq_tasks))[:, None]
-            mask[rows, idx] = True
-            probs_matrix[~mask] = 0.0
+        probs_matrix = self._apply_topk(probs_matrix, self.top_k)
 
         updates = []
         for i, task_name in enumerate(task_names):
