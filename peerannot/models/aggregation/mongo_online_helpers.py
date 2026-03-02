@@ -1146,3 +1146,433 @@ class WeightedBatchAlgorithm(SparseMongoBatchAlgorithm):
                 continue  # no valid votes or task not in mapping
 
         return answers
+
+
+class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
+    @profile
+    def _online_update_T(
+        self,
+        task_mapping: TaskMapping,
+        class_mapping: ClassMapping,
+        batch_T: sp.COO,
+        top_k: int | None = None,
+    ) -> None:
+        """
+        Update running task-class sufficient statistics using Batch EM:
+        top_k is applied to limit computation.
+        """
+        scale = 1 - self.gamma
+
+        # keep top_k per tasks
+        batch_T = self._apply_topk(batch_T, top_k)
+
+        row_idx, col_idx = batch_T.coords
+        data = batch_T.data * self.gamma
+
+        uniq_tasks = np.unique(row_idx)
+        uniq_classes = np.unique(col_idx)
+
+        task_idx = np.searchsorted(uniq_tasks, row_idx)
+        class_idx = np.searchsorted(uniq_classes, col_idx)
+        block = np.zeros(
+            (len(uniq_tasks), len(uniq_classes)),
+            dtype=np.float64,
+        )
+        np.add.at(block, (task_idx, class_idx), data)
+
+        task_names = [self._reverse_task_mapping[t] for t in uniq_tasks]
+        class_names = [self._reverse_class_mapping[c] for c in uniq_classes]
+
+        # Fetch existing probabilities from DB
+        docs = self.db.task_class_probs.find(
+            {"_id": {"$in": list(task_mapping)}},
+            {"_id": 1, "probs": 1},
+        )
+        task_to_probs = {doc["_id"]: doc.get("probs", {}) for doc in docs}
+
+        updates = []
+        for i, task_name in enumerate(task_names):
+            # scale existing probabilities
+            current_probs = {
+                cls: val * scale
+                for cls, val in task_to_probs.get(task_name, {}).items()
+            }
+
+            # add batch contributions
+            for j, cls in enumerate(class_names):
+                current_probs[cls] = current_probs.get(cls, 0.0) + float(
+                    block[i, j],
+                )
+
+            # keep top_k
+            if top_k is not None and len(current_probs) > top_k:
+                sorted_classes = sorted(
+                    current_probs.items(),
+                    key=lambda x: x[1],
+                    reverse=True,
+                )
+                top_classes = dict(sorted_classes[:top_k])
+                current_probs = top_classes  # keep top_k for DB update
+
+            updates.append(
+                UpdateOne(
+                    {"_id": task_name},
+                    {
+                        "$set": {
+                            f"probs.{cls}": val
+                            for cls, val in current_probs.items()
+                        },
+                    },
+                    upsert=True,
+                ),
+            )
+
+        if updates:
+            with self.mongo_timer("online update task class probs"):
+                self.db.task_class_probs.bulk_write(updates, ordered=False)
+
+        # normalize all probs for these tasks after insertion
+        self._normalize_probs(task_names)
+
+    @profile
+    def _online_update_sufficient_statistics(
+        self,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
+        batch_T: np.ndarray,
+        batch_matrix: sp.COO | np.ndarray,
+        top_k: int | None = None,
+    ) -> None:
+        """
+        Default online update for full confusion matrices using sufficient stats:
+        S_{l,k}^{(j)} <- (1-gamma) S_{l,k}^{(j)} + gamma * sum_t T_{t,l} 1[y_t^{(j)}=k]
+        If top_k is None -> keep all classes.
+        If top_k is set   -> keep only top_k classes per task.
+        """
+        gamma = self.gamma
+        scale = 1.0 - gamma
+
+        batch_T = self._apply_topk(batch_T, top_k)
+
+        # Update class prevalence sufficient statistics (counts)
+        if isinstance(batch_T, sp.COO):
+            class_counts = batch_T.sum(axis=0).todense()
+        else:
+            class_counts = batch_T.sum(axis=0)
+
+        class_ops = []
+        for class_name, batch_class_idx in class_mapping.items():
+            delta = float(class_counts[batch_class_idx]) * gamma
+            if delta == 0.0:
+                continue
+            class_ops.append(
+                UpdateOne(
+                    {"_id": class_name},
+                    {"$inc": {"count": delta}},
+                    upsert=True,
+                ),
+            )
+        if class_ops:
+            with self.mongo_timer("online update class sufficient stats"):
+                self.db.class_priors.update_many(
+                    {},
+                    [
+                        {
+                            "$set": {
+                                "count": {
+                                    "$multiply": [
+                                        {"$ifNull": ["$count", 0]},
+                                        scale,
+                                    ],
+                                },
+                            },
+                        },
+                    ],
+                )
+
+                self.db.class_priors.bulk_write(class_ops, ordered=False)
+
+        worker_ids = list(worker_mapping.keys())
+        worker_cursor = self.db.worker_sufficient_statistics.find(
+            {"_id": {"$in": worker_ids}},
+            {"confusion_matrix": 1},
+        )
+        worker_conf = {
+            doc["_id"]: doc.get("confusion_matrix", [])
+            for doc in worker_cursor
+        }
+
+        expected_sparse: dict[int, dict[tuple[int, int], float]] | None = None
+
+        expected_sparse = {}
+
+        t_coords_T, l_coords_T = batch_T.coords
+        data_T = batch_T.data
+        task_to_classes: dict[int, list[tuple[int, float]]] = {}
+        for t, l, v in zip(t_coords_T, l_coords_T, data_T):
+            task_to_classes.setdefault(int(t), []).append(
+                (int(l), float(v)),
+            )
+
+        t_coords_M, w_coords_M, k_coords_M = batch_matrix.coords
+        for t, w, k in zip(t_coords_M, w_coords_M, k_coords_M):
+            entries = task_to_classes.get(int(t))
+            if not entries:
+                continue
+            worker_dict = expected_sparse.setdefault(int(w), {})
+            k_int = int(k)
+            for l, v in entries:
+                key = (l, k_int)
+                worker_dict[key] = worker_dict.get(key, 0.0) + v
+
+        updates = []
+        for worker_name, batch_worker_idx in worker_mapping.items():
+            existing_matrix = worker_conf.get(worker_name, [])
+            entry_dict = {
+                (e["from_class"], e["to_class"]): e for e in existing_matrix
+            }
+
+            for entry in entry_dict.values():
+                entry["prob"] *= scale
+
+            worker_expected_sparse = expected_sparse.get(
+                batch_worker_idx,
+                {},
+            )
+            for (i, j), count in worker_expected_sparse.items():
+                if count <= 0:
+                    continue
+                from_class = self._reverse_class_mapping.get(i)
+                to_class = self._reverse_class_mapping.get(j)
+                if from_class is None or to_class is None:
+                    continue
+
+                key = (from_class, to_class)
+                if key in entry_dict:
+                    entry_dict[key]["prob"] += gamma * count
+                else:
+                    entry_dict[key] = {
+                        "from_class": from_class,
+                        "to_class": to_class,
+                        "prob": gamma * count,
+                    }
+
+            updated_matrix = list(entry_dict.values())
+
+            updates.append(
+                UpdateOne(
+                    {"_id": worker_name},
+                    {"$set": {"confusion_matrix": updated_matrix}},
+                    upsert=True,
+                ),
+            )
+
+        if updates:
+            with self.mongo_timer("online update worker confusion matrices"):
+                self.db.worker_sufficient_statistics.bulk_write(
+                    updates,
+                    ordered=False,
+                )
+
+    @profile
+    def _online_update_pi_from_sufficient_statistics(
+        self,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
+    ) -> None:
+        worker_ids = list(worker_mapping.keys())
+        worker_cursor = self.db.worker_sufficient_statistics.find(
+            {"_id": {"$in": worker_ids}},
+            {"confusion_matrix": 1},
+        )
+        worker_conf = {
+            doc["_id"]: doc.get("confusion_matrix", [])
+            for doc in worker_cursor
+        }
+
+        updates = []
+        for worker_name in worker_ids:
+            counts = worker_conf.get(worker_name, [])
+            if not counts:
+                updates.append(
+                    UpdateOne(
+                        {"_id": worker_name},
+                        {"$set": {"confusion_matrix": []}},
+                        upsert=True,
+                    ),
+                )
+                continue
+
+            by_from: dict[str, list[dict]] = {}
+            for entry in counts:
+                prob = float(entry.get("prob", 0.0))
+                if prob <= 0:
+                    continue
+                by_from.setdefault(entry["from_class"], []).append(entry)
+
+            normalized = []
+            for from_class, entries in by_from.items():
+                row_sum = sum(float(e["prob"]) for e in entries)
+                if row_sum <= 0:
+                    continue
+                inv_sum = 1.0 / row_sum
+                for e in entries:
+                    p = float(e["prob"]) * inv_sum
+                    if p <= 0:
+                        continue
+                    normalized.append(
+                        {
+                            "from_class": e["from_class"],
+                            "to_class": e["to_class"],
+                            "prob": p,
+                        },
+                    )
+
+            updates.append(
+                UpdateOne(
+                    {"_id": worker_name},
+                    {"$set": {"confusion_matrix": normalized}},
+                    upsert=True,
+                ),
+            )
+
+        if updates:
+            with self.mongo_timer("online update worker confusion matrices"):
+                self.db.worker_confusion_matrices.bulk_write(
+                    updates,
+                    ordered=False,
+                )
+
+    @profile
+    def _online_update_rho_from_sufficient_statistics(self) -> None:
+        total_doc = list(
+            self.db.class_priors.aggregate(
+                [{"$group": {"_id": None, "total": {"$sum": "$count"}}}],
+            ),
+        )
+        if not total_doc:
+            return
+        total = float(total_doc[0].get("total", 0.0))
+        if total <= 0.0:
+            return
+
+        with self.mongo_timer("online update class priors"):
+            self.db.class_priors.update_many(
+                {},
+                [
+                    {
+                        "$set": {
+                            "prob": {
+                                "$cond": {
+                                    "if": {"$gt": ["$count", 0]},
+                                    "then": {"$divide": ["$count", total]},
+                                    "else": 0.0,
+                                },
+                            },
+                        },
+                    },
+                ],
+            )
+
+    @profile
+    def _online_update(
+        self,
+        task_mapping: TaskMapping,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
+        batch_T: np.ndarray,
+        batch_rho: np.ndarray,
+        batch_pi: np.ndarray,
+        batch_matrix: sp.COO | np.ndarray,
+    ) -> None:
+        self._online_update_sufficient_statistics(
+            worker_mapping,
+            class_mapping,
+            batch_T,
+            batch_matrix,
+            top_k=self.top_k,
+        )
+        self._online_update_rho_from_sufficient_statistics()
+        self._online_update_pi_from_sufficient_statistics(
+            worker_mapping,
+            class_mapping,
+        )
+
+        self._online_update_T(task_mapping, class_mapping, batch_T, self.top_k)
+
+    @profile
+    def _load_rho_from_db(self, class_mapping: dict[str, int]) -> sp.COO:
+        n_batch_classes = len(class_mapping)
+        rho = np.full(
+            n_batch_classes,
+            1.0 / float(self.n_classes),
+            dtype=np.float64,
+        )
+
+        class_ids = list(class_mapping.keys())
+
+        cursor = self.db.class_priors.find(
+            {"_id": {"$in": class_ids}},
+            {"_id": 1, "prob": 1},
+        )
+
+        found_ids = set()
+
+        for doc in cursor:
+            cls_id = doc["_id"]
+            idx = class_mapping.get(cls_id)
+            if idx is None:
+                continue
+
+            rho[idx] = float(doc.get("prob", 1.0 / self.n_classes))
+            found_ids.add(cls_id)
+
+        return sp.COO(rho)
+
+    @abstractmethod
+    def _load_pi_from_db(
+        self,
+        worker_mapping: dict[str, int],
+        class_mapping: dict[str, int],
+    ) -> sp.COO:
+        pass
+
+    def _em_loop_on_batch(
+        self,
+        batch_matrix: np.ndarray,
+        task_mapping: TaskMapping,
+        worker_mapping: WorkerMapping,
+        class_mapping: ClassMapping,
+        epsilon: Annotated[float, Ge(0)] = 1e-6,
+        maxiter: Annotated[int, Gt(0)] = 50,
+    ) -> list[float]:
+        _ = maxiter, epsilon
+
+        ll: list[float] = []
+
+        batch_rho = self._load_rho_from_db(class_mapping)
+        batch_pi = self._load_pi_from_db(
+            worker_mapping,
+            class_mapping,
+        )
+
+        batch_T, batch_denom_e_step = self._e_step(
+            batch_matrix,
+            batch_pi,
+            batch_rho,
+        )
+
+        self._online_update(
+            task_mapping,
+            worker_mapping,
+            class_mapping,
+            batch_T,
+            batch_rho,
+            batch_pi,
+            batch_matrix,
+        )
+
+        likeli = float(np.sum(np.log(batch_denom_e_step + 1e-12)))
+        ll.append(likeli)
+
+        return ll
