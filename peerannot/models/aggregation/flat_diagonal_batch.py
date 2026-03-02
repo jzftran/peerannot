@@ -1,5 +1,9 @@
 import numpy as np
 
+from peerannot.models.aggregation.diagonal_multinomial_batch import (
+    DiagonalMultinomialBatch,
+)
+
 
 class FlatDiagonalBatch(DiagonalMultinomialBatch):
     def _e_step(
