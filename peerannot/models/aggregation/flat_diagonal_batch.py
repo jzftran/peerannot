@@ -1,11 +1,11 @@
 import numpy as np
 
-from peerannot.models.aggregation.diagonal_multinomial_online import (
-    DiagonalMultinomialOnline,
+from peerannot.models.aggregation.diagonal_multinomial_batch import (
+    DiagonalMultinomialBatch,
 )
 
 
-class FlatDiagonalOnline(DiagonalMultinomialOnline):
+class FlatDiagonalBatch(DiagonalMultinomialBatch):
     def _e_step(
         self,
         batch_matrix: np.ndarray,

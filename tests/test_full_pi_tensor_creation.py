@@ -2,44 +2,44 @@ import mongomock
 import numpy as np
 import pytest
 
-from peerannot.models.aggregation.dawid_skene_online import (
-    VectorizedDawidSkeneOnlineMongo,
+from peerannot.models.aggregation.dawid_skene_batch import (
+    VectorizedDawidSkeneBatchMongo,
 )
-from peerannot.models.aggregation.diagonal_multinomial_online import (
-    VectorizedDiagonalMultinomialOnlineMongo,
+from peerannot.models.aggregation.diagonal_multinomial_batch import (
+    VectorizedDiagonalMultinomialBatchMongo,
 )
 from peerannot.models.aggregation.flat_single_binomial_online import (
-    VectorizedFlatSingleBinomialOnlineMongo,
+    VectorizedFlatSingleBinomialBatchMongo,
 )
-from peerannot.models.aggregation.multinomial_binary_online import (
-    VectorizedMultinomialBinaryOnlineMongo,
+from peerannot.models.aggregation.multinomial_binary_batch import (
+    VectorizedMultinomialBinaryBatchMongo,
 )
-from peerannot.models.aggregation.pooled_diagonal_multinomial_online import (
-    VectorizedPooledDiagonalMultinomialOnlineMongo,
+from peerannot.models.aggregation.pooled_diagonal_multinomial_batch import (
+    VectorizedPooledDiagonalMultinomialBatchMongo,
 )
-from peerannot.models.aggregation.pooled_flat_diagonal_online import (
-    VectorizedPooledFlatDiagonalOnlineMongo,
+from peerannot.models.aggregation.pooled_flat_diagonal_batch import (
+    VectorizedPooledFlatDiagonalBatchMongo,
 )
-from peerannot.models.aggregation.pooled_flat_single_binomial_online import (
-    VectorizedPooledFlatSingleBinomialOnlineMongo,
+from peerannot.models.aggregation.pooled_flat_single_binomial_batch import (
+    VectorizedPooledFlatSingleBinomialBatchMongo,
 )
-from peerannot.models.aggregation.pooled_multinomial_binary_online import (
-    VectorizedPooledMultinomialBinaryOnlineMongo,
+from peerannot.models.aggregation.pooled_multinomial_batch import (
+    VectorizedPooledMultinomialBatchMongo,
 )
-from peerannot.models.aggregation.pooled_multinomial_online import (
-    VectorizedPooledMultinomialOnlineMongo,
+from peerannot.models.aggregation.pooled_multinomial_binary_batch import (
+    VectorizedPooledMultinomialBinaryBatchMongo,
 )
 
 MODELS = [
-    VectorizedDiagonalMultinomialOnlineMongo,
-    VectorizedFlatSingleBinomialOnlineMongo,
-    VectorizedMultinomialBinaryOnlineMongo,
-    VectorizedPooledFlatDiagonalOnlineMongo,
-    VectorizedPooledDiagonalMultinomialOnlineMongo,
-    VectorizedPooledFlatSingleBinomialOnlineMongo,
-    VectorizedPooledMultinomialBinaryOnlineMongo,
-    VectorizedPooledMultinomialOnlineMongo,
-    VectorizedDawidSkeneOnlineMongo,
+    VectorizedDiagonalMultinomialBatchMongo,
+    VectorizedFlatSingleBinomialBatchMongo,
+    VectorizedMultinomialBinaryBatchMongo,
+    VectorizedPooledFlatDiagonalBatchMongo,
+    VectorizedPooledDiagonalMultinomialBatchMongo,
+    VectorizedPooledFlatSingleBinomialBatchMongo,
+    VectorizedPooledMultinomialBinaryBatchMongo,
+    VectorizedPooledMultinomialBatchMongo,
+    VectorizedDawidSkeneBatchMongo,
 ]
 
 # Save the original implementation

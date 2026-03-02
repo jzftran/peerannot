@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from peerannot.models.aggregation.multinomial_binary_online import (
-    MultinomialBinaryOnline,
+from peerannot.models.aggregation.multinomial_binary_batch import (
+    MultinomialBinaryBatch,
 )
 from peerannot.models.aggregation.online_helpers import (
     RetroactiveAlgorithm,
@@ -9,7 +9,7 @@ from peerannot.models.aggregation.online_helpers import (
 
 
 class MultinomialBinaryRetroactive(
-    MultinomialBinaryOnline,
+    MultinomialBinaryBatch,
     RetroactiveAlgorithm,
 ):
     def __init__(self, *args, **kwargs):

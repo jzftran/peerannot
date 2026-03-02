@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from loguru import logger
 
 
-class OnlineMongoLoggingMixin:
+class BatchMongoLoggingMixin:
     """Provides monitoring utilities for EM iterations, MongoDB I/O, and batches."""
 
     @contextmanager

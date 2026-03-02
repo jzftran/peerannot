@@ -9,16 +9,16 @@ from line_profiler import profile
 from pydantic import validate_call
 
 from peerannot.models.aggregation.mongo_online_helpers import EStepResult
-from peerannot.models.aggregation.online_helpers import OnlineAlgorithm
-from peerannot.models.aggregation.pooled_multinomial_binary_online import (
-    VectorizedPooledMultinomialBinaryOnlineMongo,
+from peerannot.models.aggregation.online_helpers import BatchAlgorithm
+from peerannot.models.aggregation.pooled_multinomial_binary_batch import (
+    VectorizedPooledMultinomialBinaryBatchMongo,
 )
 
 if TYPE_CHECKING:
     from peerannot.models.aggregation.types import ClassMapping, WorkerMapping
 
 
-class PooledFlatSingleBinomialOnline(OnlineAlgorithm):
+class PooledFlatSingleBinomialBatch(BatchAlgorithm):
     @validate_call
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -95,8 +95,8 @@ class PooledFlatSingleBinomialOnline(OnlineAlgorithm):
         self.pi = self.pi + self.gamma * (batch_pi - self.pi)
 
 
-class VectorizedPooledFlatSingleBinomialOnlineMongo(
-    VectorizedPooledMultinomialBinaryOnlineMongo,
+class VectorizedPooledFlatSingleBinomialBatchMongo(
+    VectorizedPooledMultinomialBinaryBatchMongo,
 ):
     @validate_call
     def __init__(self, **kwargs) -> None:

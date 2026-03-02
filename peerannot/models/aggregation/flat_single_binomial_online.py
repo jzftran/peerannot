@@ -4,13 +4,13 @@ import numpy as np
 import sparse as sp
 
 from peerannot.models.aggregation.mongo_online_helpers import EStepResult
-from peerannot.models.aggregation.multinomial_binary_online import (
-    MultinomialBinaryOnline,
-    VectorizedMultinomialBinaryOnlineMongo,
+from peerannot.models.aggregation.multinomial_binary_batch import (
+    MultinomialBinaryBatch,
+    VectorizedMultinomialBinaryBatchMongo,
 )
 
 
-class FlatSingleBinomialOnline(MultinomialBinaryOnline):
+class FlatSingleBinomialBatch(MultinomialBinaryBatch):
     def _e_step(self, batch_matrix, batch_pi, batch_rho):
         n_tasks, n_workers, n_classes = batch_matrix.shape
 
@@ -39,7 +39,7 @@ class FlatSingleBinomialOnline(MultinomialBinaryOnline):
         return T, denom
 
 
-class VectorizedFlatSingleBinomialOnline(MultinomialBinaryOnline):
+class VectorizedFlatSingleBinomialBatch(MultinomialBinaryBatch):
     def _e_step(self, batch_matrix, batch_pi, batch_rho):
         n_tasks, n_workers, n_classes = batch_matrix.shape
 
@@ -81,8 +81,8 @@ class VectorizedFlatSingleBinomialOnline(MultinomialBinaryOnline):
         raise NotImplementedError
 
 
-class VectorizedFlatSingleBinomialOnlineMongo(
-    VectorizedMultinomialBinaryOnlineMongo,
+class VectorizedFlatSingleBinomialBatchMongo(
+    VectorizedMultinomialBinaryBatchMongo,
 ):
     def _e_step(
         self,

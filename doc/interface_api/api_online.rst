@@ -9,8 +9,8 @@ It supports storing and updating **task-class probabilities**, **worker confusio
 
 Two main variants are provided (both are **abstract classes** and must be subclassed with concrete implementations of ``_e_step``, ``_m_step``, and ``_online_update_pi``):
 
-- ``MongoOnlineAlgorithm``: variant using NumPy arrays (dense arrays)
-- ``SparseMongoOnlineAlgorithm``: variant using ``sparse.COO`` backend for memory-efficient calculations
+- ``MongoBatchAlgorithm``: variant using NumPy arrays (dense arrays)
+- ``SparseMongoBatchAlgorithm``: variant using ``sparse.COO`` backend for memory-efficient calculations
 
 The module supports **online updates**, **batch processing**, and **per-batch EM convergence**.
 
@@ -21,10 +21,10 @@ The module supports **online updates**, **batch processing**, and **per-batch EM
 Classes
 -------
 
-MongoOnlineAlgorithm
+MongoBatchAlgorithm
 ^^^^^^^^^^^^^^^^^^^^
 
-Abstract base class for online EM aggregation with MongoDB.
+Abstract base class for Batch EM aggregation with MongoDB.
 
 **Features**
 
@@ -60,9 +60,9 @@ Abstract base class for online EM aggregation with MongoDB.
 +---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------+
 | ``_init_T(batch_matrix, ...)``                                                                    | Initializes task-class probability array.                           |
 +---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------+
-| ``_online_update_T(...)``                                                                         | Updates task-class probabilities online.                            |
+| ``_online_update_T(...)``                                                                         | Updates task-class probabilities Batch.                            |
 +---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------+
-| ``_online_update_rho(...)``                                                                       | Updates class priors online.                                        |
+| ``_online_update_rho(...)``                                                                       | Updates class priors Batch.                                        |
 +---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------+
 | ``_online_update_pi(...)``                                                                        | Updates worker confusion matrices (abstract).                       |
 +---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------+
@@ -106,10 +106,10 @@ Abstract base class for online EM aggregation with MongoDB.
 - ``_online_update_pi(worker_mapping, class_mapping, batch_pi)``  
   Responsible for updating global worker confusion matrices in MongoDB.
 
-SparseMongoOnlineAlgorithm
+SparseMongoBatchAlgorithm
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Extends ``MongoOnlineAlgorithm`` to support **sparse matrices**.
+Extends ``MongoBatchAlgorithm`` to support **sparse matrices**.
 
 **Features**
 

@@ -3,9 +3,9 @@ from itertools import chain
 import numpy as np
 import pytest
 
-from peerannot.models.aggregation.dawid_skene_online import (
+from peerannot.models.aggregation.dawid_skene_batch import (
+    DawidSkeneBatch,
     DawidSkeneMongo,
-    DawidSkeneOnline,
 )
 from peerannot.models.aggregation.online_helpers import (
     batch_generator_by_task,
@@ -25,7 +25,6 @@ batch2 = {
     4: {2: 1, 4: 2},
 }
 
-
 expected_confusion_matrices = [
     {
         "_id": "0",
@@ -42,27 +41,35 @@ expected_confusion_matrices = [
     {
         "_id": "2",
         "confusion_matrix": [
-            {"from_class_id": 0, "to_class_id": 0, "prob": 0.3402460446135528},
+            {"from_class_id": 0, "to_class_id": 0, "prob": 0.4},
+            {"from_class_id": 0, "to_class_id": 1, "prob": 0.6},
             {"from_class_id": 1, "to_class_id": 1, "prob": 1.0},
-            {"from_class_id": 0, "to_class_id": 1, "prob": 0.6597539553864472},
             {"from_class_id": 2, "to_class_id": 1, "prob": 1.0},
         ],
     },
     {
         "_id": "3",
         "confusion_matrix": [
-            {"from_class_id": 1, "to_class_id": 1, "prob": 1.0},
             {"from_class_id": 0, "to_class_id": 1, "prob": 1.0},
+            {"from_class_id": 1, "to_class_id": 1, "prob": 1.0},
         ],
     },
     {
         "_id": "4",
         "confusion_matrix": [
-            {"from_class_id": 1, "to_class_id": 1, "prob": 0.2538683445334543},
-            {"from_class_id": 1, "to_class_id": 0, "prob": 0.3730658277332728},
-            {"from_class_id": 1, "to_class_id": 2, "prob": 0.3730658277332728},
-            {"from_class_id": 0, "to_class_id": 1, "prob": 0.568874072230784},
-            {"from_class_id": 0, "to_class_id": 0, "prob": 0.431125927769216},
+            {"from_class_id": 0, "to_class_id": 0, "prob": 0.4545454545454546},
+            {"from_class_id": 0, "to_class_id": 1, "prob": 0.5454545454545455},
+            {
+                "from_class_id": 1,
+                "to_class_id": 0,
+                "prob": 0.35714285714285715,
+            },
+            {"from_class_id": 1, "to_class_id": 1, "prob": 0.2857142857142857},
+            {
+                "from_class_id": 1,
+                "to_class_id": 2,
+                "prob": 0.35714285714285715,
+            },
             {"from_class_id": 2, "to_class_id": 2, "prob": 1.0},
         ],
     },
@@ -123,7 +130,7 @@ def test_dawid_skene_confusion_matrices():
 
 
 def test_dawid_skene_online_process_batch():
-    dso = DawidSkeneOnline()
+    dso = DawidSkeneBatch()
     dso.process_batch(batch1)
     dso.process_batch(batch2)
 
@@ -225,21 +232,13 @@ def test_multiple_users_in_batch():
     }
     result = list(batch_generator_by_user(answers, 2))
 
-    # Up to 2 users per batch
-    all_users = set(
-        chain.from_iterable(obs.keys() for obs in answers.values()),
-    )
     # Flatten batches to verify coverage
     batched_users = set().union(
-        *(
-            batch_user
-            for b in result
-            for batch_user in chain.from_iterable(b.values())
-        ),
+        *(batch_user for b in result for batch_user in b.values()),
     )
 
-    assert batched_users == set(answers["obs1"].values()) | set(
-        answers["obs2"].values(),
+    assert batched_users == set(answers["obs1"].keys()) | set(
+        answers["obs2"].keys(),
     )
     assert all(len(set(chain.from_iterable(b.values()))) <= 2 for b in result)
 
@@ -332,18 +331,19 @@ def test_batch_size_larger_than_total_votes():
 
 def test_empty_input():
     answers = {}
-    result = list(batch_generator_by_vote((answers, 2)))
+
+    result = list(batch_generator_by_vote(answers, 2))
     assert result == []
 
 
-@pytest.mark.parametrize("bad_size", [0, -1, -5])
-def test_invalid_batch_size(bad_size):
+@pytest.mark.parametrize("batch_size", [0, -1, -5])
+def test_invalid_batch_size(batch_size):
     answers = {"obs1": {"u1": 10}}
     with pytest.raises(
         ValueError,
         match="batch_size must be a positive integer",
     ):
-        list(batch_generator_by_vote(answers, bad_size))
+        list(batch_generator_by_vote(answers, batch_size))
 
 
 def test_split_votes_within_observation():

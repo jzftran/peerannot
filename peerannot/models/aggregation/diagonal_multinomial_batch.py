@@ -9,17 +9,17 @@ from pymongo import UpdateOne
 from peerannot.models.aggregation.mongo_online_helpers import (
     EStepResult,
     MStepResult,
-    SparseMongoOnlineAlgorithm,
-    WeightedOnlineAlgorithm,
+    SparseMongoBatchAlgorithm,
+    WeightedBatchAlgorithm,
 )
-from peerannot.models.aggregation.online_helpers import OnlineAlgorithm
+from peerannot.models.aggregation.online_helpers import BatchAlgorithm
 from peerannot.models.aggregation.types import (
     ClassMapping,
     WorkerMapping,
 )
 
 
-class DiagonalMultinomialOnline(OnlineAlgorithm):
+class DiagonalMultinomialBatch(BatchAlgorithm):
     @validate_call
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -141,8 +141,8 @@ class DiagonalMultinomialOnline(OnlineAlgorithm):
         return batch_T, batch_denom_e_step
 
 
-class VectorizedDiagonalMultinomialOnlineMongo(
-    SparseMongoOnlineAlgorithm,
+class VectorizedDiagonalMultinomialBatchMongo(
+    SparseMongoBatchAlgorithm,
 ):
     """Vectorized pooled diagonal multinomial binary online algorithm
     using sparse matrices and mongo.
@@ -444,9 +444,9 @@ class VectorizedDiagonalMultinomialOnlineMongo(
         return pi_batch
 
 
-class WeightedDiagonalMultinomialOnlineMongo(
-    VectorizedDiagonalMultinomialOnlineMongo,
-    WeightedOnlineAlgorithm,
+class WeightedDiagonalMultinomialBatchMongo(
+    VectorizedDiagonalMultinomialBatchMongo,
+    WeightedBatchAlgorithm,
 ):
     """One-step Weighted Majority Voting after Dawid Skene.
     Use the mean of the diagonal of the confusion matrix as a weight for

@@ -8,13 +8,13 @@ from pydantic import validate_call
 from pymongo import UpdateOne
 
 from peerannot.models.aggregation.mongo_online_helpers import (
-    SparseMongoOnlineAlgorithm,
+    SparseMongoBatchAlgorithm,
 )
-from peerannot.models.aggregation.online_helpers import OnlineAlgorithm
+from peerannot.models.aggregation.online_helpers import BatchAlgorithm
 from peerannot.models.aggregation.types import ClassMapping, WorkerMapping
 
 
-class PooledMultinomialOnline(OnlineAlgorithm):
+class PooledMultinomialBatch(BatchAlgorithm):
     @validate_call
     def __init__(
         self,
@@ -112,7 +112,7 @@ class PooledMultinomialOnline(OnlineAlgorithm):
                 self.pi[i_global, :] /= row_sum
 
 
-class VectorizedPooledMultinomialOnlineMongo(SparseMongoOnlineAlgorithm):
+class VectorizedPooledMultinomialBatchMongo(SparseMongoBatchAlgorithm):
     @validate_call
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -175,8 +175,10 @@ class VectorizedPooledMultinomialOnlineMongo(SparseMongoOnlineAlgorithm):
         batch_pi: np.ndarray,
     ) -> None:
         model_name = self.__class__.__name__
+        gamma = self.gamma
 
         batch_names = list(class_mapping.keys())
+        n_classes = len(class_mapping)
 
         cursor = self.db.worker_confusion_matrices.find(
             {
@@ -190,77 +192,48 @@ class VectorizedPooledMultinomialOnlineMongo(SparseMongoOnlineAlgorithm):
         )
         docs = list(cursor)
 
-        old_rows = []
-        old_cols = []
-        old_data = []
+        old_matrix = np.zeros((n_classes, n_classes), dtype=float)
 
-        existing_from_set = set()
         for doc in docs:
             _id = doc["_id"]
-
-            from_name = _id.get("from_class") if isinstance(_id, dict) else _id
+            from_name = _id["from_class"]
             if from_name not in class_mapping:
                 continue
+
             r = class_mapping[from_name]
-            existing_from_set.add(from_name)
             probs = doc.get("probs", {}) or {}
+
             for to_name, prob in probs.items():
-                if to_name not in class_mapping:
-                    continue
-                c = class_mapping[to_name]
-                old_rows.append(r)
-                old_cols.append(c)
-                old_data.append(float(prob))
+                if to_name in class_mapping:
+                    c = class_mapping[to_name]
+                    old_matrix[r, c] = float(prob)
 
-        # old_rows = np.asarray(old_rows, dtype=int)
-        # old_cols = np.asarray(old_cols, dtype=int)
-        # old_data = np.asarray(old_data, dtype=float)
+        batch_matrix = np.zeros((n_classes, n_classes), dtype=float)
 
-        bp_rows, bp_cols = batch_pi.coords
+        if hasattr(batch_pi, "coords"):
+            rows, cols = batch_pi.coords
+            batch_matrix[rows, cols] = batch_pi.data
+        else:
+            batch_matrix = np.asarray(batch_pi, dtype=float)
 
-        rows_concat = np.concatenate([old_rows, bp_rows])
-        cols_concat = np.concatenate([old_cols, bp_cols])
-        data_concat = np.concatenate([old_data, batch_pi.data])
+        new_matrix = (1.0 - gamma) * old_matrix + gamma * batch_matrix
 
-        # sum duplicates by (row, col) pairs
-        # Create structured keys for lexsort: sort by (row, col)
-        order = np.lexsort((cols_concat, rows_concat))
-        rows_sorted = rows_concat[order]
-        cols_sorted = cols_concat[order]
-        data_sorted = data_concat[order]
-
-        # compute mask of new groups
-        change_mask = np.empty(rows_sorted.shape, dtype=bool)
-        change_mask[0] = True
-        if rows_sorted.size > 1:
-            change_mask[1:] = (rows_sorted[1:] != rows_sorted[:-1]) | (
-                cols_sorted[1:] != cols_sorted[:-1]
-            )
-        # indices where groups start
-        starts = np.nonzero(change_mask)[0]
-        # ends are next start or len
-        ends = np.concatenate([starts[1:], np.array([rows_sorted.size])])
-
-        uniq_rows = rows_sorted[starts]
-        uniq_cols = cols_sorted[starts]
-        # sum data within runs
-        uniq_data = np.empty(starts.size, dtype=float)
-        for i, (s, e) in enumerate(zip(starts, ends)):
-            uniq_data[i] = data_sorted[s:e].sum()
-
-        per_row = {}
-        for r, c, v in zip(uniq_rows, uniq_cols, uniq_data):
-            per_row.setdefault(int(r), []).append((int(c), float(v)))
+        row_sums = new_matrix.sum(axis=1, keepdims=True)
+        nonzero_mask = row_sums.squeeze() > 0
+        new_matrix[nonzero_mask] /= row_sums[nonzero_mask]
 
         updates = []
+
         for from_name in batch_names:
             r = class_mapping[from_name]
-            entries = per_row.get(r, [])
-            probs_dict = (
-                {list(class_mapping.keys())[c]: p for c, p in entries}
-                if entries
-                else {}
-            )
+            row = new_matrix[r]
+
+            probs_dict = {
+                self._reverse_class_mapping[c]: float(p)
+                for c, p in enumerate(row)
+                if p > 0.0
+            }
+
             updates.append(
                 UpdateOne(
                     {"_id": {"model": model_name, "from_class": from_name}},
@@ -325,3 +298,13 @@ class VectorizedPooledMultinomialOnlineMongo(SparseMongoOnlineAlgorithm):
         ).copy()
 
         return full_pi
+
+
+m = VectorizedPooledMultinomialBatchMongo()
+m.drop()
+batch1 = {0: {0: 0}, 1: {1: 1}, 2: {2: 0}}
+batch2 = {0: {3: 1, 4: 1}, 3: {2: 1, 4: 0}, 4: {2: 1, 4: 2}}
+
+m.process_batch(batch1)
+m.process_batch(batch2)
+m.pi

@@ -6,13 +6,13 @@ import sparse as sp
 from line_profiler import profile
 
 from peerannot.models.aggregation.mongo_online_helpers import EStepResult
-from peerannot.models.aggregation.pooled_diagonal_multinomial_online import (
-    PooledDiagonalMultinomialOnline,
-    VectorizedPooledDiagonalMultinomialOnlineMongo,
+from peerannot.models.aggregation.pooled_diagonal_multinomial_batch import (
+    PooledDiagonalMultinomialBatch,
+    VectorizedPooledDiagonalMultinomialBatchMongo,
 )
 
 
-class VectorizedPooledFlatDiagonalOnline(PooledDiagonalMultinomialOnline):
+class VectorizedPooledFlatDiagonalBatch(PooledDiagonalMultinomialBatch):
     @profile
     def _e_step(
         self,
@@ -52,8 +52,8 @@ class VectorizedPooledFlatDiagonalOnline(PooledDiagonalMultinomialOnline):
         return batch_T, batch_denom_e_step
 
 
-class VectorizedPooledFlatDiagonalOnlineMongo(
-    VectorizedPooledDiagonalMultinomialOnlineMongo,
+class VectorizedPooledFlatDiagonalBatchMongo(
+    VectorizedPooledDiagonalMultinomialBatchMongo,
 ):
     @profile
     def _e_step(
