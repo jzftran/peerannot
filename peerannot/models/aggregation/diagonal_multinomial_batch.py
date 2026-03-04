@@ -188,39 +188,39 @@ class VectorizedDiagonalMultinomialBatchMongo(
     @profile
     def _online_update_pi(
         self,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         batch_pi: sp.COO,
     ) -> None:
         """
         vectorized update of worker confusion matrices using sparse COO arrays.
 
         Arguments:
-            worker_mapping: dict mapping worker_id -> batch row index
-            class_mapping: dict mapping class_name -> global class_id
+
             batch_pi: sparse.COO of shape (n_workers, n_classes)
         """
-        worker_ids = list(worker_mapping.keys())
+        worker_ids = list(self._batch_worker_to_idx.keys())
         n_workers, n_classes = batch_pi.shape
 
         worker_idx_map = {wid: i for i, wid in enumerate(worker_ids)}
         global_class_ids = np.fromiter(
-            self._reverse_class_mapping.keys(),
+            self._batch_idx_to_class.keys(),
             dtype=int,
         )
         batch_class_indices = np.arange(len(global_class_ids), dtype=int)
 
         batch_worker_indices = np.fromiter(
-            worker_mapping.values(),
+            self._batch_worker_to_idx.values(),
             dtype=int,
         )
 
         conf_matrix = np.zeros(
-            (n_workers, len(self._reverse_class_mapping)),
+            (n_workers, len(self._batch_idx_to_class)),
             dtype=np.float64,
         )
 
-        proj = {f"confusion_matrix.{cls}": 1 for cls in class_mapping.keys()}
+        proj = {
+            f"confusion_matrix.{cls}": 1
+            for cls in self._batch_class_to_idx.keys()
+        }
 
         worker_docs = self.db.worker_confusion_matrices.find(
             {"_id": {"$in": worker_ids}},
@@ -231,7 +231,7 @@ class VectorizedDiagonalMultinomialBatchMongo(
             i = worker_idx_map[wid]
             conf_dict = doc.get("confusion_matrix", {})
             for cls_name, prob in conf_dict.items():
-                cid = class_mapping.get(cls_name)
+                cid = self._batch_class_to_idx.get(cls_name)
                 conf_matrix[i, cid] = prob
 
         coords = batch_pi.coords  # shape (2, nnz)
@@ -289,7 +289,7 @@ class VectorizedDiagonalMultinomialBatchMongo(
             vals = probs[start : start + count]
 
             new_conf = {
-                self._reverse_class_mapping[int(cid)]: float(p)
+                self._batch_idx_to_class[int(cid)]: float(p)
                 for cid, p in zip(cids, vals, strict=True)
             }
 
@@ -424,12 +424,10 @@ class VectorizedDiagonalMultinomialBatchMongo(
     def build_batch_pi_tensor(
         self,
         batch_pi: np.ndarray,
-        class_mapping: ClassMapping,
-        worker_mapping: WorkerMapping,
     ) -> np.ndarray:
         pi = batch_pi
         n_workers, _ = pi.shape
-        n_classes = len(class_mapping)
+        n_classes = len(self._batch_class_to_idx)
 
         off_diag = (1.0 - pi) / (n_classes - 1)
 

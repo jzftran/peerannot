@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from typing import (
-    TYPE_CHECKING,
-)
-
 import numpy as np
+import sparse as sp
 from line_profiler import profile
 from pydantic import validate_call
 
@@ -16,13 +13,6 @@ from peerannot.models.aggregation.mongo_online_helpers import (
 from peerannot.models.aggregation.online_helpers import (
     BatchAlgorithm,
 )
-
-if TYPE_CHECKING:
-    from peerannot.models.aggregation.types import (
-        ClassMapping,
-        WorkerMapping,
-    )
-import sparse as sp
 
 
 class PooledMultinomialBinaryBatch(BatchAlgorithm):
@@ -110,8 +100,6 @@ class PooledMultinomialBinaryBatch(BatchAlgorithm):
 
     def _online_update_pi(
         self,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         batch_pi: np.ndarray,
     ):
         self.pi = self.pi + self.gamma * (batch_pi - self.pi)
@@ -149,8 +137,6 @@ class VectorizedPooledMultinomialBinaryBatchMongo(SparseMongoBatchAlgorithm):
     @profile
     def _online_update_pi(
         self,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         batch_pi: np.ndarray,
     ):
         doc = self.db.worker_confusion_matrices.find_one(
@@ -263,11 +249,9 @@ class VectorizedPooledMultinomialBinaryBatchMongo(SparseMongoBatchAlgorithm):
     def build_batch_pi_tensor(
         self,
         batch_pi: np.ndarray,
-        class_mapping: ClassMapping,
-        worker_mapping: WorkerMapping,
     ) -> np.ndarray:
-        n_workers = len(worker_mapping)
-        n_classes = len(class_mapping)
+        n_workers = len(self._batch_worker_to_idx)
+        n_classes = len(self._batch_class_to_idx)
 
         # Off-diagonal probability for each worker and class (row-based)
         off_diag = (1.0 - batch_pi) / (n_classes - 1)  # (n_workers, n_classes)

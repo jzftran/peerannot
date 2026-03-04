@@ -209,12 +209,10 @@ class VectorizedMultinomialBinaryBatchMongo(
     @profile
     def _online_update_pi(
         self,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         batch_pi: np.ndarray,
     ) -> None:
         # Fetch all existing confusion matrices for these workers
-        worker_ids = list(worker_mapping.keys())
+        worker_ids = list(self._batch_worker_to_idx.keys())
         worker_docs = self.db.worker_confusion_matrices.find(
             {"_id": {"$in": worker_ids}},
         )
@@ -225,7 +223,7 @@ class VectorizedMultinomialBinaryBatchMongo(
 
         updates = []
 
-        for worker_id, batch_worker_idx in worker_mapping.items():
+        for worker_id, batch_worker_idx in self._batch_worker_to_idx.items():
             pi_new_value = batch_pi[batch_worker_idx]
             existing_entry = worker_confusions.get(worker_id)
             if existing_entry is None:
@@ -352,11 +350,9 @@ class VectorizedMultinomialBinaryBatchMongo(
     def build_batch_pi_tensor(
         self,
         batch_pi: np.ndarray,
-        class_mapping: ClassMapping,
-        worker_mapping: WorkerMapping,
     ) -> np.ndarray:
         pi_scalar = batch_pi[:, None, None]
-        n_classes = len(class_mapping)
+        n_classes = len(self._batch_class_to_idx)
         off_diag = (1.0 - pi_scalar) / (n_classes - 1)
         pi_batch = np.tile(off_diag, (1, n_classes, n_classes))
         for i in range(n_classes):

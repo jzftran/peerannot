@@ -48,9 +48,9 @@ class SparseMongoBatchTest(SparseMongoBatchAlgorithm):
 def mock_model():
     class DummyModel:
         def __init__(self):
-            self.task_mapping = {}
-            self.worker_mapping = {}
-            self.class_mapping = {}
+            self.repo._batch_task_to_idx = {}
+            self.repo._batch_worker_to_idx = {}
+            self.repo._batch_class_to_idx = {}
             self.t = 42
 
             self.get_or_create_indices = MagicMock()
@@ -72,9 +72,9 @@ def mock_model():
 def mock_model_process_em():
     class DummyModel:
         def __init__(self):
-            self.task_mapping = {}
-            self.worker_mapping = {}
-            self.class_mapping = {}
+            self.repo._batch_task_to_idx = {}
+            self.repo._batch_worker_to_idx = {}
+            self.repo._batch_class_to_idx = {}
             self.get_or_create_indices = MagicMock()
 
             self._init_T = MagicMock(
@@ -371,55 +371,43 @@ def test_prepare_mapping_initial(repo):
         "t2": {"w3": "c1"},
     }
 
-    task_mapping = {}
-    worker_mapping = {}
-    class_mapping = {}
+    repo._prepare_mapping(batch)
 
-    repo._prepare_mapping(batch, task_mapping, worker_mapping, class_mapping)
+    assert repo._batch_task_to_idx == {"t1": 0, "t2": 1}
+    assert repo._batch_worker_to_idx == {"w1": 0, "w2": 1, "w3": 2}
+    assert repo._batch_class_to_idx == {"c1": 0, "c2": 1}
 
-    assert task_mapping == {"t1": 0, "t2": 1}
-    assert worker_mapping == {"w1": 0, "w2": 1, "w3": 2}
-    assert class_mapping == {"c1": 0, "c2": 1}
-
-    assert repo._reverse_task_mapping == {0: "t1", 1: "t2"}
-    assert repo._reverse_worker_mapping == {0: "w1", 1: "w2", 2: "w3"}
-    assert repo._reverse_class_mapping == {0: "c1", 1: "c2"}
+    assert repo._batch_idx_to_task == {0: "t1", 1: "t2"}
+    assert repo._batch_idx_to_worker == {0: "w1", 1: "w2", 2: "w3"}
+    assert repo._batch_idx_to_class == {0: "c1", 1: "c2"}
 
 
 def test_prepare_mapping_with_existing(repo):
     batch1 = {"t1": {"w1": "c1"}}
     batch2 = {"t2": {"w2": "c2"}, "t1": {"w3": "c1"}}
 
-    task_mapping = {}
-    worker_mapping = {}
-    class_mapping = {}
+    repo._prepare_mapping(batch1)
+    repo._prepare_mapping(batch2)
 
-    repo._prepare_mapping(batch1, task_mapping, worker_mapping, class_mapping)
-    repo._prepare_mapping(batch2, task_mapping, worker_mapping, class_mapping)
+    assert repo._batch_task_to_idx == {"t1": 0, "t2": 1}
+    assert repo._batch_worker_to_idx == {"w1": 0, "w2": 1, "w3": 2}
+    assert repo._batch_class_to_idx == {"c1": 0, "c2": 1}
 
-    assert task_mapping == {"t1": 0, "t2": 1}
-    assert worker_mapping == {"w1": 0, "w2": 1, "w3": 2}
-    assert class_mapping == {"c1": 0, "c2": 1}
-
-    assert repo._reverse_task_mapping == {0: "t1", 1: "t2"}
-    assert repo._reverse_worker_mapping == {0: "w1", 1: "w2", 2: "w3"}
-    assert repo._reverse_class_mapping == {0: "c1", 1: "c2"}
+    assert repo._batch_idx_to_task == {0: "t1", 1: "t2"}
+    assert repo._batch_idx_to_worker == {0: "w1", 1: "w2", 2: "w3"}
+    assert repo._batch_idx_to_class == {0: "c1", 1: "c2"}
 
 
 def test_prepare_mapping_empty_batch(repo):
-    task_mapping = {}
-    worker_mapping = {}
-    class_mapping = {}
+    repo._prepare_mapping({})
 
-    repo._prepare_mapping({}, task_mapping, worker_mapping, class_mapping)
+    assert repo._batch_task_to_idx == {}
+    assert repo._batch_worker_to_idx == {}
+    assert repo._batch_class_to_idx == {}
 
-    assert task_mapping == {}
-    assert worker_mapping == {}
-    assert class_mapping == {}
-
-    assert repo._reverse_task_mapping == {}
-    assert repo._reverse_worker_mapping == {}
-    assert repo._reverse_class_mapping == {}
+    assert repo._batch_idx_to_task == {}
+    assert repo._batch_idx_to_worker == {}
+    assert repo._batch_idx_to_class == {}
 
 
 def test_process_batch_to_matrix_basic(repo):
@@ -428,9 +416,9 @@ def test_process_batch_to_matrix_basic(repo):
         "t2": {"w3": "c1"},
     }
 
-    task_mapping = {"t1": 0, "t2": 1}
-    worker_mapping = {"w1": 0, "w2": 1, "w3": 2}
-    class_mapping = {"c1": 0, "c2": 1}
+    repo._batch_task_to_idx = {"t1": 0, "t2": 1}
+    repo._batch_worker_to_idx = {"w1": 0, "w2": 1, "w3": 2}
+    repo._batch_class_to_idx = {"c1": 0, "c2": 1}
 
     matrix = repo._process_batch_to_matrix(
         batch,
@@ -450,18 +438,11 @@ def test_process_batch_to_matrix_basic(repo):
 
 
 def test_process_batch_to_matrix_empty_batch(repo):
-    task_mapping = {"t1": 0, "t2": 1}
-    worker_mapping = {"w1": 0, "w2": 1}
-    class_mapping = {"c1": 0, "c2": 1}
-
     matrix = repo._process_batch_to_matrix(
         {},
-        task_mapping,
-        worker_mapping,
-        class_mapping,
     )
 
-    assert matrix.shape == (2, 2, 2)
+    assert matrix.shape == (0, 0, 0)
     assert not np.any(matrix)
 
 
@@ -537,13 +518,14 @@ def test_process_batch_increments_t_and_calls_process_batch_matrix(
 
     # Check that process_batch_matrix was called
     args, kwargs = mocked_matrix.call_args
-    batch_matrix, task_mapping, worker_mapping, class_mapping = args[:4]
 
-    assert "task__DOT__1" in task_mapping  # Escaped ID
-    assert "worker1" in worker_mapping
-    assert "worker2" in worker_mapping
-    assert "worker3" in worker_mapping
-    assert "0" in class_mapping or 1 in class_mapping  # class IDs mapped
+    assert "task__DOT__1" in repo._batch_task_to_idx  # Escaped ID
+    assert "worker1" in repo._batch_worker_to_idx
+    assert "worker2" in repo._batch_worker_to_idx
+    assert "worker3" in repo._batch_worker_to_idx
+    assert (
+        "0" in repo._batch_class_to_idx or 1 in repo._batch_class_to_idx
+    )  # class IDs mapped
 
 
 @pytest.fixture
@@ -570,24 +552,22 @@ def mock_model_process_em():
     )
 
     # Dummy mappings
+    model.class_mapping = {}
     model.task_mapping = {}
     model.worker_mapping = {}
-    model.class_mapping = {}
 
     return model
 
 
 def test_process_batch_matrix_calls_dependencies(mock_model_process_em):
     batch_matrix = np.random.randint(0, 2, size=(3, 3, 3))  # dummy matrix
-    task_mapping = {"t1": 0, "t2": 1}
-    worker_mapping = {"w1": 0}
-    class_mapping = {"c1": 0, "c2": 1}
+
+    mock_model_process_em._batch_task_to_idx = {"t1": 0, "t2": 1}
+    mock_model_process_em._batch_worker_to_idx = {"w1": 0}
+    mock_model_process_em._batch_class_to_idx = {"c1": 0, "c2": 1}
 
     ll = mock_model_process_em.process_batch_matrix(
         batch_matrix,
-        task_mapping,
-        worker_mapping,
-        class_mapping,
         maxiter=10,
         epsilon=1e-5,
     )
@@ -596,22 +576,19 @@ def test_process_batch_matrix_calls_dependencies(mock_model_process_em):
 
     mock_model_process_em.get_or_create_indices.assert_any_call(
         mock_model_process_em.task_mapping,
-        list(task_mapping),
+        list(mock_model_process_em._batch_task_to_idx),
     )
     mock_model_process_em.get_or_create_indices.assert_any_call(
         mock_model_process_em.worker_mapping,
-        list(worker_mapping),
+        list(mock_model_process_em._batch_worker_to_idx),
     )
     mock_model_process_em.get_or_create_indices.assert_any_call(
         mock_model_process_em.class_mapping,
-        list(class_mapping),
+        list(mock_model_process_em._batch_class_to_idx),
     )
 
     mock_model_process_em._em_loop_on_batch.assert_called_once_with(
         batch_matrix,
-        task_mapping,
-        worker_mapping,
-        class_mapping,
         1e-5,
         10,
     )
@@ -619,18 +596,18 @@ def test_process_batch_matrix_calls_dependencies(mock_model_process_em):
     mock_model_process_em.log_batch_summary.assert_called_once()
     args, kwargs = mock_model_process_em.log_batch_summary.call_args
     assert args[0] == 42  # self.t
-    assert args[1] == len(task_mapping)
-    assert args[2] == len(worker_mapping)
-    assert args[3] == len(class_mapping)
+    assert args[1] == len(mock_model_process_em._batch_task_to_idx)
+    assert args[2] == len(mock_model_process_em._batch_worker_to_idx)
+    assert args[3] == len(mock_model_process_em._batch_class_to_idx)
     assert args[4] == len(ll)
     assert args[6] == ll[-1]  # last log likelihood
 
 
 def test_em_loop_on_batch_convergence(repo):
     batch_matrix = np.random.randint(0, 2, size=(3, 3, 3))  # dummy matrix
-    task_mapping = {"t1": 0}
-    worker_mapping = {"w1": 0}
-    class_mapping = {"c1": 0}
+    repo._batch_task_to_idx = {"t1": 0}
+    repo._batch_worker_to_idx = {"w1": 0}
+    repo._batch_class_to_idx = {"c1": 0}
 
     repo._m_step = MagicMock(
         return_value=(np.array([[0.5, 0.5]]), np.array([[0.5, 0.5]])),
@@ -643,9 +620,6 @@ def test_em_loop_on_batch_convergence(repo):
 
     ll = repo._em_loop_on_batch(
         batch_matrix,
-        task_mapping,
-        worker_mapping,
-        class_mapping,
         epsilon=1e-8,
         maxiter=3,
     )
@@ -658,20 +632,12 @@ def test_em_loop_on_batch_convergence(repo):
 
     args, kwargs = repo._online_update.call_args
 
-    assert args[0] == task_mapping
-    assert args[1] == worker_mapping
-    assert args[2] == class_mapping
-
-    np.testing.assert_allclose(args[3], np.array([[0.5, 0.5]]))  # batch_T
-    np.testing.assert_allclose(args[4], np.array([[0.5, 0.5]]))  # batch_rho
-    np.testing.assert_allclose(args[5], np.array([[0.5, 0.5]]))  # batch_pi
+    np.testing.assert_allclose(args[0], np.array([[0.5, 0.5]]))  # batch_T
+    np.testing.assert_allclose(args[1], np.array([[0.5, 0.5]]))  # batch_rho
+    np.testing.assert_allclose(args[2], np.array([[0.5, 0.5]]))  # batch_pi
 
 
 def test_online_update_calls_subupdates(repo):
-    task_mapping = {"t1": 0}
-    worker_mapping = {"w1": 0}
-    class_mapping = {"c1": 0, "c2": 1}
-
     batch_T = np.array([[0.7, 0.3]])
     batch_rho = np.array([[0.6, 0.4]])
     batch_pi = np.array([[0.5, 0.5]])
@@ -681,24 +647,17 @@ def test_online_update_calls_subupdates(repo):
     repo._online_update_pi = MagicMock()
 
     repo._online_update(
-        task_mapping,
-        worker_mapping,
-        class_mapping,
         batch_T,
         batch_rho,
         batch_pi,
     )
 
     repo._online_update_T.assert_called_once_with(
-        task_mapping,
-        class_mapping,
         batch_T,
         repo.top_k,
     )
-    repo._online_update_rho.assert_called_once_with(class_mapping, batch_rho)
+    repo._online_update_rho.assert_called_once_with(batch_rho)
     repo._online_update_pi.assert_called_once_with(
-        worker_mapping,
-        class_mapping,
         batch_pi,
     )
 
@@ -757,8 +716,8 @@ def test_normalize_probs_bulk_write_called(repo, monkeypatch):
 
 
 def test_online_update_T_builds_correct_update(repo, monkeypatch):
-    task_mapping = {"t1": 0}
-    class_mapping = {"c1": 0, "c2": 1}
+    repo._batch_task_to_idx = {"t1": 0}
+    repo._batch_class_to_idx = {"c1": 0, "c2": 1}
     batch_T = np.array([[0.6, 0.4]])
     repo.t = 12
     captured = {}
@@ -773,7 +732,7 @@ def test_online_update_T_builds_correct_update(repo, monkeypatch):
         fake_bulk_write,
     )
 
-    repo._online_update_T(task_mapping, class_mapping, batch_T, top_k=None)
+    repo._online_update_T(batch_T, top_k=None)
 
     # Ensure bulk_write called
     assert "ops" in captured
@@ -793,27 +752,24 @@ def test_online_update_T_writes_and_normalizes(repo):
     )
     repo.t = 12341
     repo._normalize_probs = MagicMock()
-    task_mapping = {"t1": 0}
-    class_mapping = {"c1": 0, "c2": 1}
+    repo._batch_task_to_idx = {"t1": 0}
+    repo._batch_class_to_idx = {"c1": 0, "c2": 1}
     batch_T = np.array([[0.6, 0.4]])
 
-    repo._online_update_T(task_mapping, class_mapping, batch_T)
-
-    repo._normalize_probs.assert_called_once_with(["t1"])
+    repo._online_update_T(batch_T)
 
     doc = repo.db.task_class_probs.find_one({"_id": "t1"})
     assert "probs" in doc
 
 
 def test_online_update_T_handles_multiple_tasks(repo):
-    task_mapping = {"t1": 0, "t2": 1}
-    class_mapping = {"c1": 0}
+    repo._batch_task_to_idx = {"t1": 0, "t2": 1}
+
+    repo._batch_class_to_idx = {"c1": 0}
     batch_T = np.array([[0.7], [0.3]])
     repo.t = 9
     repo._normalize_probs = MagicMock()
-    repo._online_update_T(task_mapping, class_mapping, batch_T)
-
-    repo._normalize_probs.assert_called_once_with(["t1", "t2"])
+    repo._online_update_T(batch_T)
 
     docs = list(repo.db.task_class_probs.find({}, {"_id": 1}))
     ids = {d["_id"] for d in docs}
@@ -830,10 +786,10 @@ def test_online_update_rho_scales_and_increments(repo):
 
     repo.t = 9
     # repo.gamma = 0.1
-    class_mapping = {"c1": 0, "c2": 1}
+    repo._batch_class_to_idx = {"c1": 0, "c2": 1}
     batch_rho = np.array([0.6, 0.4])
 
-    repo._online_update_rho(class_mapping, batch_rho)
+    repo._online_update_rho(batch_rho)
 
     docs = {d["_id"]: d["prob"] for d in repo.db.class_priors.find()}
     expected_c1 = 0.5 * 0.9 + 0.6 * 0.1
@@ -843,10 +799,10 @@ def test_online_update_rho_scales_and_increments(repo):
 
 
 def test_online_update_rho_upserts_new_classes(repo):
-    class_mapping = {"c3": 0}
+    repo._batch_class_to_idx = {"c3": 0}
     batch_rho = np.array([1.0])
     repo.t = 9
-    repo._online_update_rho(class_mapping, batch_rho)
+    repo._online_update_rho(batch_rho)
 
     doc = repo.db.class_priors.find_one({"_id": "c3"})
 
@@ -854,7 +810,7 @@ def test_online_update_rho_upserts_new_classes(repo):
 
 
 def test_online_update_rho_no_ops_when_empty(repo, monkeypatch):
-    class_mapping = {}
+    repo._batch_class_to_idx = {}
     batch_rho = np.array([])
     repo.t = 9
 
@@ -865,7 +821,7 @@ def test_online_update_rho_no_ops_when_empty(repo, monkeypatch):
 
     monkeypatch.setattr(repo.db.class_priors, "bulk_write", fake_bulk_write)
 
-    repo._online_update_rho(class_mapping, batch_rho)
+    repo._online_update_rho(batch_rho)
 
     assert called == {}
 
@@ -875,15 +831,12 @@ def test_process_batch_to_matrix_basic(repo_sparse):
         "task1": {"worker1": "classA", "worker2": "classB"},
         "task2": {"worker1": "classB"},
     }
-    task_mapping = {"task1": 0, "task2": 1}
-    worker_mapping = {"worker1": 0, "worker2": 1}
-    class_mapping = {"classA": 0, "classB": 1}
+    repo_sparse._batch_task_to_idx = {"task1": 0, "task2": 1}
+    repo_sparse._batch_worker_to_idx = {"worker1": 0, "worker2": 1}
+    repo_sparse._batch_class_to_idx = {"classA": 0, "classB": 1}
 
     result = repo_sparse._process_batch_to_matrix(
         batch,
-        task_mapping,
-        worker_mapping,
-        class_mapping,
     )
 
     assert isinstance(result, sp.COO)
@@ -901,15 +854,12 @@ def test_process_batch_to_matrix_basic(repo_sparse):
 
 def test_process_batch_to_matrix_empty(repo_sparse):
     batch = {}
-    task_mapping = {"task1": 0}
-    worker_mapping = {"worker1": 0}
-    class_mapping = {"classA": 0}
+    repo_sparse._batch_task_to_idx = {"task1": 0}
+    repo_sparse._batch_worker_to_idx = {"worker1": 0}
+    repo_sparse._batch_class_to_idx = {"classA": 0}
 
     result = repo_sparse._process_batch_to_matrix(
         batch,
-        task_mapping,
-        worker_mapping,
-        class_mapping,
     )
 
     assert isinstance(result, sp.COO)
@@ -919,15 +869,12 @@ def test_process_batch_to_matrix_empty(repo_sparse):
 
 def test_process_batch_to_matrix_single_entry(repo_sparse):
     batch = {"taskX": {"workerY": "classZ"}}
-    task_mapping = {"taskX": 0}
-    worker_mapping = {"workerY": 0}
-    class_mapping = {"classZ": 0}
+    repo_sparse._batch_task_to_idx = {"taskX": 0}
+    repo_sparse._batch_worker_to_idx = {"workerY": 0}
+    repo_sparse._batch_class_to_idx = {"classZ": 0}
 
     result = repo_sparse._process_batch_to_matrix(
         batch,
-        task_mapping,
-        worker_mapping,
-        class_mapping,
     )
 
     assert result.shape == (1, 1, 1)
@@ -941,15 +888,16 @@ def test_process_batch_to_matrix_another_single_entry(repo_sparse):
         "taskX": {"workerY": "classZ"},
         "taskA": {"workerA": "classA", "workerB": "classC"},
     }
-    task_mapping = {"taskX": 0, "taskA": 1}
-    worker_mapping = {"workerY": 0, "workerA": 1, "workerB": 2}
-    class_mapping = {"classZ": 0, "classA": 1, "classC": 2}
+    repo_sparse._batch_task_to_idx = {"taskX": 0, "taskA": 1}
+    repo_sparse._batch_worker_to_idx = {
+        "workerY": 0,
+        "workerA": 1,
+        "workerB": 2,
+    }
+    repo_sparse._batch_class_to_idx = {"classZ": 0, "classA": 1, "classC": 2}
 
     result = repo_sparse._process_batch_to_matrix(
         batch,
-        task_mapping,
-        worker_mapping,
-        class_mapping,
     )
 
     assert result.shape == (2, 3, 3)
@@ -964,11 +912,11 @@ def test_init_T_with_empty_db(repo_sparse):
     data = np.array([1, 1])
     batch_matrix = sp.COO(coords, data, shape=(2, 2, 2))
 
-    task_mapping = {"t1": 0, "t2": 1}
-    class_mapping = {"c1": 0, "c2": 1}
+    repo._batch_task_to_idx = {"t1": 0, "t2": 1}
+    repo._batch_class_to_idx = {"c1": 0, "c2": 1}
 
     # no prior DB state
-    result = repo_sparse._init_T(batch_matrix, task_mapping, class_mapping)
+    result = repo_sparse._init_T(batch_matrix)
 
     assert isinstance(result, sp.COO)
     dense = result.todense()
@@ -983,8 +931,8 @@ def test_init_T_merges_existing_probs(repo_sparse):
     data = np.array([1, 1])
     batch_matrix = sp.COO(coords, data, shape=(1, 1, 2))
 
-    task_mapping = {"tX": 0}
-    class_mapping = {"cA": 0, "cB": 1}
+    repo_sparse._batch_task_to_idx = {"tX": 0}
+    repo_sparse._batch_class_to_idx = {"cA": 0, "cB": 1}
 
     # Insert existing probs in DB
     repo_sparse.db.task_class_probs.insert_one(
@@ -994,7 +942,7 @@ def test_init_T_merges_existing_probs(repo_sparse):
         },
     )
 
-    result = repo_sparse._init_T(batch_matrix, task_mapping, class_mapping)
+    result = repo_sparse._init_T(batch_matrix)
 
     dense = result.todense()
     expected = (1 - repo_sparse.gamma) * np.array(
@@ -1013,11 +961,11 @@ def test_online_update_T_merges_and_top_k(repo_sparse):
     data = np.array([0.5, 0.3, 0.2])
     batch_T = sp.COO(coords, data, shape=(1, 3))  # 1 task, 3 classes
 
-    task_mapping = {"task0": 0}
-    class_mapping = {"classA": 0, "classB": 1, "classC": 2}
+    repo_sparse._batch_task_to_idx = {"task0": 0}
+    repo_sparse._batch_class_to_idx = {"classA": 0, "classB": 1, "classC": 2}
 
-    repo_sparse._reverse_task_mapping = {0: "task0"}
-    repo_sparse._reverse_class_mapping = {
+    repo_sparse._batch_idx_to_task = {0: "task0"}
+    repo_sparse._batch_idx_to_class = {
         0: "classA",
         1: "classB",
         2: "classC",
@@ -1033,7 +981,7 @@ def test_online_update_T_merges_and_top_k(repo_sparse):
     # Mock _normalize_probs to avoid side effects
     repo_sparse._normalize_probs = MagicMock()
 
-    repo_sparse._online_update_T(task_mapping, class_mapping, batch_T)
+    repo_sparse._online_update_T(batch_T)
 
     updated = repo_sparse.db.task_class_probs.find_one({"_id": "task0"})
     assert updated is not None

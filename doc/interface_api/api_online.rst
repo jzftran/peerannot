@@ -46,7 +46,7 @@ Abstract base class for Batch EM aggregation with MongoDB.
 +===================================================================================================+=====================================================================+
 | ``process_batch(batch, maxiter=50, epsilon=1e-6)``                                                | Processes a batch of votes, performs EM iterations until convergence |
 +---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------+
-| ``process_batch_matrix(batch_matrix, task_mapping, worker_mapping, class_mapping, maxiter, epsilon)`` | Core EM loop for a batch array.                                    |
+| ``process_batch_matrix(batch_matrix, maxiter, epsilon)``                                          | Core EM loop for a batch array.                                    |
 +---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------+
 | ``get_or_create_indices(collection, keys)``                                                       | Ensures mappings exist in MongoDB for tasks, workers, or classes.   |
 +---------------------------------------------------------------------------------------------------+---------------------------------------------------------------------+

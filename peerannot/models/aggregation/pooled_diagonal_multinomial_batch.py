@@ -167,20 +167,19 @@ class VectorizedPooledDiagonalMultinomialBatchMongo(
     @profile
     def _online_update_pi(
         self,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         batch_pi: np.ndarray,  # shape: (n_batch_classes,)
     ) -> None:
         # Fetch class documents from the database that are in the batch
         class_docs = list(
             self.db.class_mapping.find(
-                {"_id": {"$in": list(class_mapping.keys())}},
+                {"_id": {"$in": list(self._batch_class_to_idx.keys())}},
             ),
         )
 
         # Create a mapping from batch class indices to global class indices
         batch_idx_to_name = {
-            class_mapping[doc["_id"]]: doc["_id"] for doc in class_docs
+            self._batch_class_to_idx[doc["_id"]]: doc["_id"]
+            for doc in class_docs
         }
 
         # Fetch the pooled confusion matrix
@@ -300,11 +299,9 @@ class VectorizedPooledDiagonalMultinomialBatchMongo(
     def build_batch_pi_tensor(
         self,
         batch_pi: np.ndarray,
-        class_mapping: ClassMapping,
-        worker_mapping: WorkerMapping,
     ) -> np.ndarray:
-        n_workers = len(worker_mapping)
-        n_classes = len(class_mapping)
+        n_workers = len(self._batch_worker_to_idx)
+        n_classes = len(self._batch_class_to_idx)
         off_diag = (1.0 - batch_pi) / (n_classes - 1)
 
         full_pi = np.broadcast_to(

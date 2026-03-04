@@ -170,15 +170,13 @@ class VectorizedPooledMultinomialBatchMongo(SparseMongoBatchAlgorithm):
     @profile
     def _online_update_pi(
         self,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         batch_pi: np.ndarray,
     ) -> None:
         model_name = self.__class__.__name__
         gamma = self.gamma
 
-        batch_names = list(class_mapping.keys())
-        n_classes = len(class_mapping)
+        batch_names = list(self._batch_class_to_idx.keys())
+        n_classes = len(batch_names)
 
         cursor = self.db.worker_confusion_matrices.find(
             {
@@ -197,15 +195,15 @@ class VectorizedPooledMultinomialBatchMongo(SparseMongoBatchAlgorithm):
         for doc in docs:
             _id = doc["_id"]
             from_name = _id["from_class"]
-            if from_name not in class_mapping:
+            if from_name not in self._batch_class_to_idx:
                 continue
 
-            r = class_mapping[from_name]
+            r = self._batch_class_to_idx[from_name]
             probs = doc.get("probs", {}) or {}
 
             for to_name, prob in probs.items():
-                if to_name in class_mapping:
-                    c = class_mapping[to_name]
+                if to_name in self._batch_class_to_idx:
+                    c = self._batch_class_to_idx[to_name]
                     old_matrix[r, c] = float(prob)
 
         batch_matrix = np.zeros((n_classes, n_classes), dtype=float)
@@ -225,11 +223,11 @@ class VectorizedPooledMultinomialBatchMongo(SparseMongoBatchAlgorithm):
         updates = []
 
         for from_name in batch_names:
-            r = class_mapping[from_name]
+            r = self._batch_class_to_idx[from_name]
             row = new_matrix[r]
 
             probs_dict = {
-                self._reverse_class_mapping[c]: float(p)
+                self._batch_idx_to_class[c]: float(p)
                 for c, p in enumerate(row)
                 if p > 0.0
             }
@@ -287,11 +285,9 @@ class VectorizedPooledMultinomialBatchMongo(SparseMongoBatchAlgorithm):
     def build_batch_pi_tensor(
         self,
         batch_pi: np.ndarray,
-        class_mapping: ClassMapping,
-        worker_mapping: WorkerMapping,
     ) -> np.ndarray:
-        n_workers = len(worker_mapping)
-        n_classes = len(class_mapping)
+        n_workers = len(self._batch_worker_to_idx)
+        n_classes = len(self._batch_class_to_idx)
         full_pi = np.broadcast_to(
             batch_pi,
             (n_workers, n_classes, n_classes),
@@ -307,4 +303,3 @@ batch2 = {0: {3: 1, 4: 1}, 3: {2: 1, 4: 0}, 4: {2: 1, 4: 2}}
 
 m.process_batch(batch1)
 m.process_batch(batch2)
-m.pi

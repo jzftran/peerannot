@@ -14,11 +14,6 @@ from peerannot.models.aggregation.dawid_skene_batch import (
 from peerannot.models.aggregation.mongo_online_helpers import (
     SparseMongoOnlineAlgorithm,
 )
-from peerannot.models.aggregation.types import (
-    ClassMapping,
-    TaskMapping,
-    WorkerMapping,
-)
 
 
 class MinibatchOnlineDawidSkene(
@@ -28,8 +23,6 @@ class MinibatchOnlineDawidSkene(
     @profile
     def _load_pi_from_db(
         self,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
     ) -> sp.COO:
         """
         Load worker confusion matrices from DB and project into batch tensor.
@@ -42,8 +35,8 @@ class MinibatchOnlineDawidSkene(
             - If row at least partially specified the rest is set to 1e-12.
         """
 
-        n_workers = len(worker_mapping)
-        n_batch_classes = len(class_mapping)
+        n_workers = len(self._batch_worker_to_idx)
+        n_batch_classes = len(self._batch_class_to_idx)
 
         # TODO move to init
         if self.n_classes <= 1:
@@ -66,13 +59,13 @@ class MinibatchOnlineDawidSkene(
             np.fill_diagonal(pi[w], default_diag)
 
         cursor = self.db.worker_confusion_matrices.find(
-            {"_id": {"$in": list(worker_mapping.keys())}},
+            {"_id": {"$in": list(self._batch_worker_to_idx.keys())}},
             {"_id": 1, "confusion_matrix": 1},
         )
 
         for worker_doc in cursor:
             worker_id = worker_doc["_id"]
-            w_idx = worker_mapping.get(worker_id)
+            w_idx = self._batch_worker_to_idx.get(worker_id)
 
             if w_idx is None:
                 continue
@@ -88,8 +81,8 @@ class MinibatchOnlineDawidSkene(
                 from_name = entry.get("from_class")
                 to_name = entry.get("to_class")
 
-                l_idx = class_mapping.get(from_name)
-                k_idx = class_mapping.get(to_name)
+                l_idx = self._batch_class_to_idx.get(from_name)
+                k_idx = self._batch_class_to_idx.get(to_name)
 
                 if l_idx is None or k_idx is None:
                     continue  # class not in batch
@@ -129,18 +122,18 @@ class MajorityVotingOnlineDawidSkene(
         self._total_task_count = 0
 
     @profile
-    def _load_rho_from_db(self, class_mapping: dict[str, int]) -> sp.COO:
-        n_classes = len(class_mapping)
+    def _load_rho_from_db(self) -> sp.COO:
+        n_classes = len(self._batch_class_to_idx)
         rho = np.zeros(n_classes, dtype=np.float64)
 
-        class_ids = list(class_mapping.keys())
+        class_ids = list(self._batch_class_to_idx.keys())
         cursor = self.db.class_priors.find(
             {"_id": {"$in": class_ids}},
             {"_id": 1, "prob": 1},
         )
         for doc in cursor:
             cls_id = doc["_id"]
-            idx = class_mapping.get(cls_id)
+            idx = self._batch_class_to_idx.get(cls_id)
             if idx is not None:
                 rho[idx] = float(doc.get("prob", 0.0))
 
@@ -159,18 +152,16 @@ class MajorityVotingOnlineDawidSkene(
     @profile
     def _load_pi_from_db(
         self,
-        worker_mapping: dict[str, int],
-        class_mapping: dict[str, int],
     ) -> sp.COO:
-        n_workers = len(worker_mapping)
-        n_classes = len(class_mapping)
+        n_workers = len(self._batch_worker_to_idx)
+        n_classes = len(self._batch_class_to_idx)
 
         pi = np.zeros((n_workers, n_classes, n_classes), dtype=np.float64)
 
         if n_workers == 0 or n_classes == 0:
             return sp.COO(pi)
 
-        worker_ids = list(worker_mapping.keys())
+        worker_ids = list(self._batch_worker_to_idx.keys())
 
         cursor = self.db.worker_confusion_matrices.find(
             {"_id": {"$in": worker_ids}},
@@ -180,7 +171,7 @@ class MajorityVotingOnlineDawidSkene(
         for doc in cursor:
             worker_id = doc["_id"]
 
-            w_idx = worker_mapping.get(worker_id)
+            w_idx = self._batch_worker_to_idx.get(worker_id)
             if w_idx is None:
                 continue
 
@@ -188,8 +179,8 @@ class MajorityVotingOnlineDawidSkene(
                 from_cls = e.get("from_class")
                 to_cls = e.get("to_class")
 
-                l_idx = class_mapping.get(from_cls)
-                k_idx = class_mapping.get(to_cls)
+                l_idx = self._batch_class_to_idx.get(from_cls)
+                k_idx = self._batch_class_to_idx.get(to_cls)
 
                 if l_idx is None or k_idx is None:
                     continue
@@ -235,9 +226,6 @@ class MajorityVotingOnlineDawidSkene(
     def _em_loop_on_batch(
         self,
         batch_matrix: np.ndarray | sp.COO,
-        task_mapping: TaskMapping,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         epsilon: Annotated[float, Ge(0)] = 1e-6,
         maxiter: Annotated[int, Gt(0)] = 50,
     ) -> list[float]:
@@ -253,63 +241,52 @@ class MajorityVotingOnlineDawidSkene(
         # init one step MV, then get pi and rho
         global_T = self._init_T(
             batch_matrix,
-            task_mapping,
-            class_mapping,
         )
         global_rho, global_pi = self._m_step(batch_matrix, global_T)
 
         self._online_update(
-            task_mapping,
-            worker_mapping,
-            class_mapping,
             global_T,
             global_rho,
             global_pi,
             batch_matrix,
         )
 
-        global_reverse_task_mapping = self._reverse_task_mapping.copy()
-        global_reverse_worker_mapping = self._reverse_worker_mapping.copy()
-        global_reverse_class_mapping = self._reverse_class_mapping.copy()
+        global_batch_idx_to_task = self._batch_idx_to_task.copy()
+        global_batch_idx_to_worker = self._batch_idx_to_worker.copy()
+        global_batch_idx_to_class = self._batch_idx_to_class.copy()
+
+        global_task_to_idx = self._batch_task_to_idx.copy()
+        global_worker_to_idx = self._batch_worker_to_idx.copy()
+        global_class_to_idx = self._batch_class_to_idx.copy()
 
         # TODO add avg_pi
 
-        for batch_task_idx in task_mapping.values():
+        for batch_task_idx in global_task_to_idx.values():
+            self._drop_batch_mappings()
             self.total_task_count += 1
 
             mask = batch_matrix.coords[0] == batch_task_idx
             task_w = batch_matrix.coords[1][mask]
             task_k = batch_matrix.coords[2][mask]
-            task_name = global_reverse_task_mapping[batch_task_idx]
+            task_name = global_batch_idx_to_task[batch_task_idx]
             task_votes = {
-                global_reverse_worker_mapping[
-                    int(w)
-                ]: global_reverse_class_mapping[int(k)]
+                global_batch_idx_to_worker[int(w)]: global_batch_idx_to_class[
+                    int(k)
+                ]
                 for w, k in zip(task_w, task_k)
             }
             task_batch = {task_name: task_votes}
-            task_mapping_task: TaskMapping = {}
-            worker_mapping_task: WorkerMapping = {}
-            class_mapping_task: ClassMapping = {}
+
             self._prepare_mapping(
                 task_batch,
-                task_mapping_task,
-                worker_mapping_task,
-                class_mapping_task,
             )
             task_matrix = self._process_batch_to_matrix(
                 task_batch,
-                task_mapping_task,
-                worker_mapping_task,
-                class_mapping_task,
             )
 
             # load global pi/rho but restricted to task-specific classes/workers
-            batch_rho = self._load_rho_from_db(class_mapping_task)
-            batch_pi = self._load_pi_from_db(
-                worker_mapping_task,
-                class_mapping_task,
-            )
+            batch_rho = self._load_rho_from_db()
+            batch_pi = self._load_pi_from_db()
 
             # e-step
             batch_T, batch_denom_e_step = self._e_step(
@@ -319,9 +296,6 @@ class MajorityVotingOnlineDawidSkene(
             )
 
             self._online_update(
-                task_mapping_task,
-                worker_mapping_task,
-                class_mapping_task,
                 sp.COO(batch_T),
                 global_rho,
                 global_pi,
@@ -331,9 +305,7 @@ class MajorityVotingOnlineDawidSkene(
             likeli = float(np.sum(np.log(batch_denom_e_step + 1e-12)))
             ll.append(likeli)
 
-        self._reverse_task_mapping = global_reverse_task_mapping
-        self._reverse_worker_mapping = global_reverse_worker_mapping
-        self._reverse_class_mapping = global_reverse_class_mapping
+        self._drop_batch_mappings()
 
         return ll
 
@@ -352,3 +324,6 @@ class WeightedMajorityVotingOnlineDawidSkene(
 ):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
+
+# %%

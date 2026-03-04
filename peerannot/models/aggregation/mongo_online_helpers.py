@@ -23,6 +23,11 @@ from peerannot.helpers.logging import BatchMongoLoggingMixin
 from peerannot.models.aggregation.online_helpers import (
     validate_recursion_limit,
 )
+from peerannot.models.aggregation.types import (
+    ReverseClassMapping,
+    ReverseTaskMapping,
+    ReverseWorkerMapping,
+)
 from peerannot.models.aggregation.warnings_errors import (
     DidNotConverge,
     NotInitialized,
@@ -119,9 +124,22 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
             if coll_name not in self.db.list_collection_names():
                 self.db.create_collection(coll_name)
 
+        # global mappings
         self.task_mapping = self.db.get_collection("task_mapping")
         self.worker_mapping = self.db.get_collection("worker_mapping")
         self.class_mapping = self.db.get_collection("class_mapping")
+
+        # batch mappings
+        self._drop_batch_mappings()
+
+    def _drop_batch_mappings(self) -> None:
+        self._batch_task_to_idx: TaskMapping = {}
+        self._batch_worker_to_idx: WorkerMapping = {}
+        self._batch_class_to_idx: ClassMapping = {}
+
+        self._batch_idx_to_task: ReverseTaskMapping = {}
+        self._batch_idx_to_worker: ReverseWorkerMapping = {}
+        self._batch_idx_to_class: ReverseClassMapping = {}
 
     @profile
     def insert_batch(self, batch: AnswersDict):
@@ -268,39 +286,41 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
     def _prepare_mapping(
         self,
         batch: AnswersDict,
-        task_mapping: TaskMapping,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
     ) -> None:
         """Updates the provided mappings in-place."""
         for task_id, worker_class in batch.items():
-            if task_id not in task_mapping:
-                task_mapping[task_id] = len(task_mapping)
+            if task_id not in self._batch_task_to_idx:
+                self._batch_task_to_idx[task_id] = len(self._batch_task_to_idx)
             for worker_id, class_id in worker_class.items():
-                if worker_id not in worker_mapping:
-                    worker_mapping[worker_id] = len(worker_mapping)
-                if class_id not in class_mapping:
-                    class_mapping[class_id] = len(class_mapping)
+                if worker_id not in self._batch_worker_to_idx:
+                    self._batch_worker_to_idx[worker_id] = len(
+                        self._batch_worker_to_idx,
+                    )
+                if class_id not in self._batch_class_to_idx:
+                    self._batch_class_to_idx[class_id] = len(
+                        self._batch_class_to_idx,
+                    )
 
-        self._reverse_task_mapping = {v: k for k, v in task_mapping.items()}
-        self._reverse_worker_mapping = {
-            v: k for k, v in worker_mapping.items()
+        self._batch_idx_to_task: ReverseTaskMapping = {
+            v: k for k, v in self._batch_task_to_idx.items()
         }
-        self._reverse_class_mapping = {v: k for k, v in class_mapping.items()}
+        self._batch_idx_to_worker: ReverseWorkerMapping = {
+            v: k for k, v in self._batch_worker_to_idx.items()
+        }
+        self._batch_idx_to_class: ReverseClassMapping = {
+            v: k for k, v in self._batch_class_to_idx.items()
+        }
 
     @profile
     def _process_batch_to_matrix(
         self,
         batch: AnswersDict,
-        task_mapping: TaskMapping,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
     ) -> np.ndarray:
         """Convert a batch of task assignments to a matrix format."""
 
-        num_tasks = len(task_mapping)
-        num_users = len(worker_mapping)
-        num_labels = len(class_mapping)
+        num_tasks = len(self._batch_task_to_idx)
+        num_users = len(self._batch_worker_to_idx)
+        num_labels = len(self._batch_class_to_idx)
 
         batch_matrix = np.zeros(
             (num_tasks, num_users, num_labels),
@@ -309,9 +329,9 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
 
         for task_id, worker_class in batch.items():
             for worker_id, class_id in worker_class.items():
-                task_index = task_mapping[task_id]
-                user_index = worker_mapping[worker_id]
-                label_index = class_mapping[class_id]
+                task_index = self._batch_task_to_idx[task_id]
+                user_index = self._batch_worker_to_idx[worker_id]
+                label_index = self._batch_class_to_idx[class_id]
                 batch_matrix[task_index, user_index, label_index] = True
 
         return batch_matrix
@@ -319,32 +339,32 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
     def _init_T(
         self,
         batch_matrix: np.ndarray,
-        task_mapping: TaskMapping,
-        class_mapping: ClassMapping,
     ) -> np.ndarray:
         """Initialize T matrix based on batch data."""
-
         T = batch_matrix.sum(axis=1)
         tdim = T.sum(1, keepdims=True)
         batch_T = np.where(tdim > 0, T / tdim, 0)
 
         task_probs_cursor = self.db.task_class_probs.find(
-            {"_id": {"$in": list(task_mapping)}},
-            {"_id": 1, **{f"probs.{cls}": 1 for cls in class_mapping}},
+            {"_id": {"$in": list(self._batch_task_to_idx)}},
+            {
+                "_id": 1,
+                **{f"probs.{cls}": 1 for cls in self._batch_class_to_idx},
+            },
         )
         for doc in task_probs_cursor:
             task_name = doc["_id"]
-            if task_name not in task_mapping:
+            if task_name not in self._batch_task_to_idx:
                 continue
 
-            batch_task_idx = task_mapping[task_name]
+            batch_task_idx = self._batch_task_to_idx[task_name]
             batch_T[batch_task_idx, :] *= 1 - self.gamma
             probs = doc.get("probs", {})
 
             for class_name, prob in probs.items():
-                if class_name not in class_mapping:
+                if class_name not in self._batch_class_to_idx:
                     continue
-                batch_class_idx = class_mapping[class_name]
+                batch_class_idx = self._batch_class_to_idx[class_name]
                 batch_T[batch_task_idx, batch_class_idx] += self.gamma * prob
 
         return batch_T
@@ -386,28 +406,16 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
         batch = apply_func_recursive(batch, self._escape_id)
 
         self.insert_batch(batch)
-        task_mapping: TaskMapping = {}
-        worker_mapping: WorkerMapping = {}
-        class_mapping: ClassMapping = {}
 
         self._prepare_mapping(
             batch,
-            task_mapping,
-            worker_mapping,
-            class_mapping,
         )
 
         batch_matrix = self._process_batch_to_matrix(
             batch,
-            task_mapping,
-            worker_mapping,
-            class_mapping,
         )
         return self.process_batch_matrix(
             batch_matrix,
-            task_mapping,
-            worker_mapping,
-            class_mapping,
             maxiter,
             epsilon,
         )
@@ -416,23 +424,26 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
     def process_batch_matrix(
         self,
         batch_matrix: np.ndarray | sp.COO,
-        task_mapping: TaskMapping,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         maxiter: int = 50,
         epsilon: float = 1e-6,
     ) -> list[float]:
         batch_start = time.perf_counter()
 
-        self.get_or_create_indices(self.task_mapping, list(task_mapping))
-        self.get_or_create_indices(self.worker_mapping, list(worker_mapping))
-        self.get_or_create_indices(self.class_mapping, list(class_mapping))
+        self.get_or_create_indices(
+            self.task_mapping,
+            list(self._batch_task_to_idx),
+        )
+        self.get_or_create_indices(
+            self.worker_mapping,
+            list(self._batch_worker_to_idx),
+        )
+        self.get_or_create_indices(
+            self.class_mapping,
+            list(self._batch_class_to_idx),
+        )
 
         ll = self._em_loop_on_batch(
             batch_matrix,
-            task_mapping,
-            worker_mapping,
-            class_mapping,
             epsilon,
             maxiter,
         )
@@ -440,13 +451,14 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
 
         self.log_batch_summary(
             self.t,
-            len(task_mapping),
-            len(worker_mapping),
-            len(class_mapping),
+            len(self._batch_task_to_idx),
+            len(self._batch_worker_to_idx),
+            len(self._batch_class_to_idx),
             len(ll),
             batch_time,
             ll[-1],
         )
+        self._drop_batch_mappings()
 
         return ll
 
@@ -454,9 +466,6 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
     def _em_loop_on_batch(
         self,
         batch_matrix: np.ndarray,
-        task_mapping: TaskMapping,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         epsilon: Annotated[float, Ge(0)] = 1e-6,
         maxiter: Annotated[int, Gt(0)] = 50,
     ) -> list[float]:
@@ -465,8 +474,6 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
         ll: list[float] = []
         batch_T = self._init_T(
             batch_matrix,
-            task_mapping,
-            class_mapping,
         )
 
         pbar = tqdm(total=maxiter, desc=self.__class__.__name__)
@@ -503,42 +510,36 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
 
         # Online updates
         self._online_update(
-            task_mapping,
-            worker_mapping,
-            class_mapping,
             batch_T,
             batch_rho,
             batch_pi,
         )
-
         return ll
 
     @profile
     def _online_update(
         self,
-        task_mapping: TaskMapping,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         batch_T: np.ndarray,
         batch_rho: np.ndarray,
         batch_pi: np.ndarray,
     ) -> None:
-        self._online_update_T(task_mapping, class_mapping, batch_T, self.top_k)
-        self._online_update_rho(class_mapping, batch_rho)
-        self._online_update_pi(worker_mapping, class_mapping, batch_pi)
+        self._online_update_T(batch_T, self.top_k)
+        self._online_update_rho(batch_rho)
+        self._online_update_pi(batch_pi)
 
     def _online_update_T(
         self,
-        task_mapping: TaskMapping,
-        class_mapping: ClassMapping,
         batch_T: np.ndarray,
         top_k: int | None = None,
     ) -> None:
         scale = 1 - self.gamma
         updates = []
-        for task_name, batch_task_idx in task_mapping.items():
+        for task_name, batch_task_idx in self._batch_task_to_idx.items():
             set_stage = {}
-            for class_name, batch_class_idx in class_mapping.items():
+            for (
+                class_name,
+                batch_class_idx,
+            ) in self._batch_class_to_idx.items():
                 delta = batch_T[batch_task_idx, batch_class_idx] * self.gamma
                 set_stage[f"probs.{class_name}"] = {
                     "$cond": {
@@ -593,7 +594,7 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
 
         if updates:
             self.db.task_class_probs.bulk_write(updates, ordered=False)
-            self._normalize_probs(list(task_mapping.keys()))
+            self._normalize_probs(list(self._batch_task_to_idx.keys()))
 
     @profile
     def _normalize_probs(self, updated_task_ids: list[str]) -> None:
@@ -632,7 +633,6 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
 
     def _online_update_rho(
         self,
-        class_mapping: ClassMapping,
         batch_rho: np.ndarray,
     ) -> None:
         self.db.class_priors.update_many(
@@ -648,7 +648,7 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
 
         ops = []
 
-        for class_name, batch_class_idx in class_mapping.items():
+        for class_name, batch_class_idx in self._batch_class_to_idx.items():
             delta = batch_rho[batch_class_idx] * self.gamma
 
             ops.append(
@@ -667,8 +667,6 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
     @abstractmethod
     def _online_update_pi(
         self,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         batch_pi: np.ndarray,
     ) -> None:
         "Online update_pi"
@@ -723,9 +721,6 @@ class SparseMongoBatchAlgorithm(
     def _process_batch_to_matrix(
         self,
         batch: AnswersDict,
-        task_mapping: TaskMapping,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
     ) -> sp.COO:
         """Convert a batch of task assignments to a matrix format."""
 
@@ -733,18 +728,18 @@ class SparseMongoBatchAlgorithm(
 
         for task_id, worker_class in batch.items():
             for worker_id, class_id in worker_class.items():
-                task_index = task_mapping[task_id]
-                worker_index = worker_mapping[worker_id]
-                class_index = class_mapping[class_id]
+                task_index = self._batch_task_to_idx[task_id]
+                worker_index = self._batch_worker_to_idx[worker_id]
+                class_index = self._batch_class_to_idx[class_id]
 
                 coords[0].append(task_index)
                 coords[1].append(worker_index)
                 coords[2].append(class_index)
 
         shape = (
-            len(task_mapping),
-            len(worker_mapping),
-            len(class_mapping),
+            len(self._batch_task_to_idx),
+            len(self._batch_worker_to_idx),
+            len(self._batch_class_to_idx),
         )
 
         return sp.COO(coords, data=True, shape=shape)
@@ -753,32 +748,35 @@ class SparseMongoBatchAlgorithm(
     def _init_T(
         self,
         batch_matrix: sp.COO,
-        task_mapping: TaskMapping,
-        class_mapping: ClassMapping,
     ) -> sp.COO:
         """Initialize T matrix based on batch data."""
 
         T = batch_matrix.sum(axis=1)
         tdim = T.sum(1, keepdims=True).todense()
+        print(f"{T=}")
+        print(f"{tdim=}")
         batch_T = np.where(tdim > 0, T / tdim, 0).todense()
 
         task_probs_cursor = self.db.task_class_probs.find(
-            {"_id": {"$in": list(task_mapping)}},
-            {"_id": 1, **{f"probs.{cls}": 1 for cls in class_mapping}},
+            {"_id": {"$in": list(self._batch_task_to_idx)}},
+            {
+                "_id": 1,
+                **{f"probs.{cls}": 1 for cls in self._batch_class_to_idx},
+            },
         )
         for doc in task_probs_cursor:
             task_name = doc["_id"]
-            if task_name not in task_mapping:
+            if task_name not in self._batch_task_to_idx:
                 continue
 
-            batch_task_idx = task_mapping[task_name]
+            batch_task_idx = self._batch_task_to_idx[task_name]
             batch_T[batch_task_idx, :] *= 1 - self.gamma
             probs = doc.get("probs", {})
 
             for class_name, prob in probs.items():
-                if class_name not in class_mapping:
+                if class_name not in self._batch_class_to_idx:
                     continue
-                batch_class_idx = class_mapping[class_name]
+                batch_class_idx = self._batch_class_to_idx[class_name]
                 batch_T[batch_task_idx, batch_class_idx] += self.gamma * prob
 
         return sp.COO(batch_T)
@@ -786,8 +784,6 @@ class SparseMongoBatchAlgorithm(
     @profile
     def _online_update_T(
         self,
-        task_mapping: TaskMapping,
-        class_mapping: ClassMapping,
         batch_T: sp.COO,
         top_k: int | None = None,
     ) -> None:
@@ -812,10 +808,10 @@ class SparseMongoBatchAlgorithm(
         np.add.at(block, (task_idx, class_idx), data)
 
         task_names = np.array(
-            [self._reverse_task_mapping[t] for t in uniq_tasks],
+            [self._batch_idx_to_task[t] for t in uniq_tasks],
         )
         class_names = np.array(
-            [self._reverse_class_mapping[c] for c in uniq_classes],
+            [self._batch_idx_to_class[c] for c in uniq_classes],
         )
         class_to_idx = {cls: i for i, cls in enumerate(class_names)}
 
@@ -870,8 +866,6 @@ class SparseMongoBatchAlgorithm(
     @abstractmethod
     def _online_update_pi(
         self,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         batch_pi: np.ndarray,
     ) -> None:
         "Online update pi"
@@ -994,7 +988,7 @@ class RetroactiveSparseMongoBatchAlgorithm(SparseMongoBatchAlgorithm):
             # Get all tasks that have answer_history with at least one entry
             # TODO and id should be in current tasks ,
 
-            current_tasks = list(self._reverse_task_mapping.values())
+            current_tasks = list(self._batch_idx_to_task.values())
 
             cursor = self.db.task_class_probs.find(
                 {
@@ -1152,8 +1146,6 @@ class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
     @profile
     def _online_update_T(
         self,
-        task_mapping: TaskMapping,
-        class_mapping: ClassMapping,
         batch_T: sp.COO,
         top_k: int | None = None,
     ) -> None:
@@ -1180,12 +1172,12 @@ class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
         )
         np.add.at(block, (task_idx, class_idx), data)
 
-        task_names = [self._reverse_task_mapping[t] for t in uniq_tasks]
-        class_names = [self._reverse_class_mapping[c] for c in uniq_classes]
+        task_names = [self._batch_idx_to_task[t] for t in uniq_tasks]
+        class_names = [self._batch_idx_to_class[c] for c in uniq_classes]
 
         # Fetch existing probabilities from DB
         docs = self.db.task_class_probs.find(
-            {"_id": {"$in": list(task_mapping)}},
+            {"_id": {"$in": list(self._batch_task_to_idx)}},
             {"_id": 1, "probs": 1},
         )
         task_to_probs = {doc["_id"]: doc.get("probs", {}) for doc in docs}
@@ -1237,8 +1229,6 @@ class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
     @profile
     def _online_update_sufficient_statistics(
         self,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         batch_T: np.ndarray,
         batch_matrix: sp.COO | np.ndarray,
         top_k: int | None = None,
@@ -1261,7 +1251,7 @@ class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
             class_counts = batch_T.sum(axis=0)
 
         class_ops = []
-        for class_name, batch_class_idx in class_mapping.items():
+        for class_name, batch_class_idx in self._batch_class_to_idx.items():
             delta = float(class_counts[batch_class_idx]) * gamma
             if delta == 0.0:
                 continue
@@ -1292,7 +1282,7 @@ class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
 
                 self.db.class_priors.bulk_write(class_ops, ordered=False)
 
-        worker_ids = list(worker_mapping.keys())
+        worker_ids = list(self._batch_worker_to_idx.keys())
         worker_cursor = self.db.worker_sufficient_statistics.find(
             {"_id": {"$in": worker_ids}},
             {"confusion_matrix": 1},
@@ -1326,7 +1316,7 @@ class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
                 worker_dict[key] = worker_dict.get(key, 0.0) + v
 
         updates = []
-        for worker_name, batch_worker_idx in worker_mapping.items():
+        for worker_name, batch_worker_idx in self._batch_worker_to_idx.items():
             existing_matrix = worker_conf.get(worker_name, [])
             entry_dict = {
                 (e["from_class"], e["to_class"]): e for e in existing_matrix
@@ -1342,8 +1332,8 @@ class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
             for (i, j), count in worker_expected_sparse.items():
                 if count <= 0:
                     continue
-                from_class = self._reverse_class_mapping.get(i)
-                to_class = self._reverse_class_mapping.get(j)
+                from_class = self._batch_idx_to_class.get(i)
+                to_class = self._batch_idx_to_class.get(j)
                 if from_class is None or to_class is None:
                     continue
 
@@ -1377,10 +1367,8 @@ class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
     @profile
     def _online_update_pi_from_sufficient_statistics(
         self,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
     ) -> None:
-        worker_ids = list(worker_mapping.keys())
+        worker_ids = list(self._batch_worker_to_idx.keys())
         worker_cursor = self.db.worker_sufficient_statistics.find(
             {"_id": {"$in": worker_ids}},
             {"confusion_matrix": 1},
@@ -1477,39 +1465,31 @@ class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
     @profile
     def _online_update(
         self,
-        task_mapping: TaskMapping,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         batch_T: np.ndarray,
         batch_rho: np.ndarray,
         batch_pi: np.ndarray,
         batch_matrix: sp.COO | np.ndarray,
     ) -> None:
         self._online_update_sufficient_statistics(
-            worker_mapping,
-            class_mapping,
             batch_T,
             batch_matrix,
             top_k=self.top_k,
         )
         self._online_update_rho_from_sufficient_statistics()
-        self._online_update_pi_from_sufficient_statistics(
-            worker_mapping,
-            class_mapping,
-        )
+        self._online_update_pi_from_sufficient_statistics()
 
-        self._online_update_T(task_mapping, class_mapping, batch_T, self.top_k)
+        self._online_update_T(batch_T, self.top_k)
 
     @profile
-    def _load_rho_from_db(self, class_mapping: dict[str, int]) -> sp.COO:
-        n_batch_classes = len(class_mapping)
+    def _load_rho_from_db(self) -> sp.COO:
+        n_batch_classes = len(self._batch_class_to_idx)
         rho = np.full(
             n_batch_classes,
             1.0 / float(self.n_classes),
             dtype=np.float64,
         )
 
-        class_ids = list(class_mapping.keys())
+        class_ids = list(self._batch_class_to_idx.keys())
 
         cursor = self.db.class_priors.find(
             {"_id": {"$in": class_ids}},
@@ -1520,7 +1500,7 @@ class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
 
         for doc in cursor:
             cls_id = doc["_id"]
-            idx = class_mapping.get(cls_id)
+            idx = self._batch_class_to_idx.get(cls_id)
             if idx is None:
                 continue
 
@@ -1532,17 +1512,12 @@ class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
     @abstractmethod
     def _load_pi_from_db(
         self,
-        worker_mapping: dict[str, int],
-        class_mapping: dict[str, int],
     ) -> sp.COO:
         pass
 
     def _em_loop_on_batch(
         self,
         batch_matrix: np.ndarray,
-        task_mapping: TaskMapping,
-        worker_mapping: WorkerMapping,
-        class_mapping: ClassMapping,
         epsilon: Annotated[float, Ge(0)] = 1e-6,
         maxiter: Annotated[int, Gt(0)] = 50,
     ) -> list[float]:
@@ -1550,11 +1525,8 @@ class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
 
         ll: list[float] = []
 
-        batch_rho = self._load_rho_from_db(class_mapping)
-        batch_pi = self._load_pi_from_db(
-            worker_mapping,
-            class_mapping,
-        )
+        batch_rho = self._load_rho_from_db()
+        batch_pi = self._load_pi_from_db()
 
         batch_T, batch_denom_e_step = self._e_step(
             batch_matrix,
@@ -1563,9 +1535,6 @@ class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
         )
 
         self._online_update(
-            task_mapping,
-            worker_mapping,
-            class_mapping,
             batch_T,
             batch_rho,
             batch_pi,
