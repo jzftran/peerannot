@@ -39,6 +39,8 @@ class PlantNet(CrowdModel):
         parrots="ignored",
         alpha=1,
         beta=1,
+        taxa_obs_weight=1,
+        taxa_votes_weight=0.1,
         AIweight=1,  # if AI is fixed or invalidating
         authors=None,  # path to txt file containing authors id for each task
         scores=None,  # path to txt file containing scores for each task
@@ -90,6 +92,8 @@ class PlantNet(CrowdModel):
         self.parrots = parrots
         self.alpha = alpha
         self.beta = beta
+        self.taxa_obs_weight = taxa_obs_weight
+        self.taxa_votes_weight = taxa_votes_weight
         if self.AI == "ignored":
             for task in self.answers:
                 self.answers[task] = {
@@ -305,8 +309,10 @@ class PlantNet(CrowdModel):
                             )
                             is None
                         ):
-                            taxa_votes[int(worker)] += 1 / 10
-                            dico_labs_workers[int(worker)][lab_worker] = 1
+                            taxa_votes[int(worker)] += self.taxa_votes_weight
+                            dico_labs_workers[int(worker)][lab_worker] = (
+                                self.taxa_obs_weight
+                            )
         self.n_j = np.array(
             [
                 taxa_obs[w] + np.round(taxa_votes[w])
@@ -385,6 +391,8 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
         theta_conf: float = THETACONF,
         theta_acc: float = THETAACC,
         authors: Optional[dict[Hashable, Hashable]] = None,
+        taxa_obs_weight: float = 1,
+        taxa_votes_weight: float = 0.1,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -392,6 +400,8 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
         self.beta = beta
         self.theta_conf = theta_conf
         self.theta_acc = theta_acc
+        self.taxa_obs_weight = taxa_obs_weight
+        self.taxa_votes_weight = taxa_votes_weight
         self.authors = authors or {}
 
     def _get_weights(self, n_j: np.ndarray) -> np.ndarray:
@@ -550,14 +560,14 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
                                 dico_labs_workers[worker_idx].get(lab_worker)
                                 is None
                             ):
-                                taxa_obs[worker_idx] += 1
+                                taxa_obs[worker_idx] += self.taxa_obs_weight
                                 dico_labs_workers[worker_idx][lab_worker] = 1
 
         for task_idx in range(len(task_ids)):
             for worker_idx, lab_worker in task_to_votes.get(task_idx, []):
                 if lab_worker == yhat[task_idx]:
                     if dico_labs_workers[worker_idx].get(lab_worker) is None:
-                        taxa_votes[worker_idx] += 1 / 10
+                        taxa_votes[worker_idx] += self.taxa_votes_weight
                         dico_labs_workers[worker_idx][lab_worker] = 1
 
         return np.array(
