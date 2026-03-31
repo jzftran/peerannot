@@ -33,6 +33,14 @@ You can start a MongoDB container using Docker with the following command:
 
     docker run --name mongodb -p 27017:27017 -d mongodb/mongodb-community-server:latest
 
+or run
+
+.. code-block:: bash
+
+    docker run -p 27017:27017 -d mongodb/mongodb-community-server:latest
+
+if the previous does not run fine.
+
 By default `peerannot` expects a local instance accessible at: `mongodb://localhost:27017`
 For more details on the underlying algorithms, see batch algorithms documentation.
 
