@@ -296,25 +296,6 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
     def pi(self) -> np.ndarray:
         """Load the entire pi array from MongoDB into a numpy array."""
 
-    # @profile
-    # def get_or_create_indices(self, collection, keys: list[Hashable]) -> dict:
-    #     existing_docs = collection.find({"_id": {"$in": keys}})
-    #     existing_map = {doc["_id"]: doc["index"] for doc in existing_docs}
-    #     new_keys = [k for k in keys if k not in existing_map]
-
-    #     if new_keys:
-    #         max_index = collection.estimated_document_count()
-    #         new_docs = [
-    #             {"_id": key, "index": max_index + i}
-    #             for i, key in enumerate(new_keys)
-    #         ]
-    #         collection.insert_many(new_docs)
-
-    #         for i, key in enumerate(new_keys):
-    #             existing_map[key] = max_index + i
-
-    #     return existing_map
-
     def get_or_create_indices(self, collection, keys: list[Hashable]) -> dict:
         result = {}
 
