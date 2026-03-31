@@ -227,7 +227,7 @@ class VectorizedMultinomialBinaryBatchMongo(
             pi_new_value = batch_pi[batch_worker_idx]
             existing_entry = worker_confusions.get(worker_id)
             if existing_entry is None:
-                # No previous pi — store it directly
+                # No previous pi - store it directly
                 updates.append(
                     UpdateOne(
                         {"_id": worker_id},
@@ -390,11 +390,12 @@ class VectorizedMultinomialBinaryBatchMongoLogSpace(
 
         log_probs_nnz = np.log(probs_nnz)  # float64
         log_likelihood = np.zeros((n_tasks, n_classes), dtype=np.float64)
-        np.add.at(
-            log_likelihood,
-            (tasks[:, None], np.arange(n_classes)[None, :]),
-            log_probs_nnz,
-        )
+        if not log_probs_nnz.sum() == 0:
+            np.add.at(
+                log_likelihood,
+                (tasks[:, None], np.arange(n_classes)[None, :]),
+                log_probs_nnz,
+            )
 
         max_log = np.max(log_likelihood, axis=1, keepdims=True)
         likelihood_scaled = np.exp(

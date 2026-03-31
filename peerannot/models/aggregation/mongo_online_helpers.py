@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from itertools import islice
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -43,6 +44,15 @@ if TYPE_CHECKING:
         WorkerMapping,
     )
     from peerannot.models.template import AnswersDict
+
+
+CHUNK_SIZE = 10_000
+
+
+def chunked(iterable, size):
+    it = iter(iterable)
+    while batch := list(islice(it, size)):
+        yield batch
 
 
 def sparse_topk_fast(x: sp.COO, k: int) -> sp.COO:
@@ -132,6 +142,21 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
         # batch mappings
         self._drop_batch_mappings()
 
+        self._n_task: int | None = None
+
+        self._global_class_to_idx = {
+            entry["_id"]: entry["index"]
+            for entry in self.class_mapping.find({})
+        }
+
+        self._global_idx_to_class: ReverseClassMapping = {
+            v: k for k, v in self._global_class_to_idx.items()
+        }
+        self._global_task_to_idx = {
+            entry["_id"]: entry["index"]
+            for entry in self.task_mapping.find({})
+        }
+
     def _drop_batch_mappings(self) -> None:
         self._batch_task_to_idx: TaskMapping = {}
         self._batch_worker_to_idx: WorkerMapping = {}
@@ -191,19 +216,26 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
         return self.task_mapping.count_documents({})
 
     @property
-    def total_task_count(self) -> int:
+    def n_task(self) -> int:
         """
         Returns estimated document count using estimated_document_count()
         """
-        return self.db.task_mapping.estimated_document_count()
+
+        if self._n_task is None:
+            self._n_task = self.db.task_mapping.estimated_document_count()
+        return self._n_task
+
+    @n_task.setter
+    def n_task(self, value: int) -> None:
+        self._n_task = value
 
     @property
     def gamma(self) -> float:
         """Compute current step size"""
-        if self.total_task_count == 0:
+        if self.n_task == 0:
             return 1.0
 
-        g = self._batch_size / self.total_task_count
+        g = self._batch_size / self.n_task
         #  cap gamma  at 1.0 to handle init edge cases
         return min(1.0, g)
 
@@ -264,24 +296,64 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
     def pi(self) -> np.ndarray:
         """Load the entire pi array from MongoDB into a numpy array."""
 
-    @profile
+    # @profile
+    # def get_or_create_indices(self, collection, keys: list[Hashable]) -> dict:
+    #     existing_docs = collection.find({"_id": {"$in": keys}})
+    #     existing_map = {doc["_id"]: doc["index"] for doc in existing_docs}
+    #     new_keys = [k for k in keys if k not in existing_map]
+
+    #     if new_keys:
+    #         max_index = collection.estimated_document_count()
+    #         new_docs = [
+    #             {"_id": key, "index": max_index + i}
+    #             for i, key in enumerate(new_keys)
+    #         ]
+    #         collection.insert_many(new_docs)
+
+    #         for i, key in enumerate(new_keys):
+    #             existing_map[key] = max_index + i
+
+    #     return existing_map
+
     def get_or_create_indices(self, collection, keys: list[Hashable]) -> dict:
-        existing_docs = collection.find({"_id": {"$in": keys}})
-        existing_map = {doc["_id"]: doc["index"] for doc in existing_docs}
-        new_keys = [k for k in keys if k not in existing_map]
+        result = {}
 
-        if new_keys:
-            max_index = collection.estimated_document_count()
-            new_docs = [
-                {"_id": key, "index": max_index + i}
-                for i, key in enumerate(new_keys)
-            ]
-            collection.insert_many(new_docs)
+        for batch in chunked(keys, CHUNK_SIZE):
+            existing_docs = collection.find(
+                {"_id": {"$in": batch}},
+                {"_id": 1, "index": 1},
+            )
+            existing_map = {doc["_id"]: doc["index"] for doc in existing_docs}
 
-            for i, key in enumerate(new_keys):
-                existing_map[key] = max_index + i
+            missing = [k for k in batch if k not in existing_map]
 
-        return existing_map
+            if missing:
+                counter = collection.database.counters.find_one_and_update(
+                    {"_id": collection.name},
+                    {"$inc": {"seq": len(missing)}},
+                    upsert=True,
+                    return_document=True,
+                )
+
+                start_index = counter["seq"] - len(missing)
+
+                ops = []
+                for i, key in enumerate(missing):
+                    idx = start_index + i
+                    ops.append(
+                        UpdateOne(
+                            {"_id": key},
+                            {"$setOnInsert": {"index": idx}},
+                            upsert=True,
+                        ),
+                    )
+                    existing_map[key] = idx
+
+                collection.bulk_write(ops, ordered=False)
+
+            result.update(existing_map)
+
+        return result
 
     def _prepare_mapping(
         self,
@@ -441,6 +513,21 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
             self.class_mapping,
             list(self._batch_class_to_idx),
         )
+        self._global_class_to_idx = {
+            entry["_id"]: entry["index"]
+            for entry in self.class_mapping.find({})
+        }
+
+        self._global_idx_to_class: ReverseClassMapping = {
+            v: k for k, v in self._global_class_to_idx.items()
+        }
+
+        self._global_task_to_idx = {
+            entry["_id"]: entry["index"]
+            for entry in self.task_mapping.find({})
+        }
+
+        self.n_task = self.db.task_mapping.estimated_document_count()
 
         ll = self._em_loop_on_batch(
             batch_matrix,
@@ -700,6 +787,23 @@ class SparseMongoBatchAlgorithm(
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
+    def get_answers(self) -> np.ndarray:
+        """Get current most likely class for each task. Shouldn't
+        be used."""
+        if self.n_task == 0:
+            raise NotInitialized(self.__class__.__name__)
+
+        answers = np.zeros(self.n_task, dtype=object)
+        for answer in self.db.task_class_probs.find(
+            {},
+            {"_id": 1, "current_answer": 1},
+        ):
+            answers[self._global_task_to_idx[answer["_id"]]] = (
+                self._unescape_id(str(answer["current_answer"]))
+            )
+
+        return answers
+
     def _apply_topk(
         self,
         T: sp.COO | np.ndarray,
@@ -753,8 +857,6 @@ class SparseMongoBatchAlgorithm(
 
         T = batch_matrix.sum(axis=1)
         tdim = T.sum(1, keepdims=True).todense()
-        print(f"{T=}")
-        print(f"{tdim=}")
         batch_T = np.where(tdim > 0, T / tdim, 0).todense()
 
         task_probs_cursor = self.db.task_class_probs.find(
@@ -1545,3 +1647,733 @@ class SparseMongoOnlineAlgorithm(SparseMongoBatchAlgorithm, ABC):
         ll.append(likeli)
 
         return ll
+
+
+class SparseMongoOnlineGlobalAlgorithm(SparseMongoOnlineAlgorithm):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._global_class_to_idx: ClassMapping = {}
+        self._global_idx_to_class: ReverseClassMapping = {}
+
+    @profile
+    def _online_update_sufficient_statistics(
+        self,
+        batch_T: sp.COO | np.ndarray,
+        batch_matrix: sp.COO | np.ndarray,
+        top_k: int | None = None,
+    ) -> None:
+        """
+        Global-class version of sufficient-statistics update.
+
+        In this global variant:
+        - `batch_T` columns are global class indices.
+        - `batch_matrix` stores votes with global class indices.
+        """
+        gamma = self.gamma
+        scale = 1.0 - gamma
+
+        batch_T = self._apply_topk(batch_T, top_k)
+
+        class_counts = batch_T.sum(axis=0)
+
+        class_ops: list[UpdateOne] = []
+        for class_name, global_idx in self._global_class_to_idx.items():
+            if global_idx >= len(class_counts):
+                continue
+            delta = float(class_counts[global_idx]) * gamma
+            if delta == 0.0:
+                continue
+            class_ops.append(
+                UpdateOne(
+                    {"_id": class_name},
+                    {"$inc": {"count": delta}},
+                    upsert=True,
+                ),
+            )
+
+        if class_ops:
+            with self.mongo_timer("online update class sufficient stats"):
+                self.db.class_priors.update_many(
+                    {},
+                    [
+                        {
+                            "$set": {
+                                "count": {
+                                    "$multiply": [
+                                        {"$ifNull": ["$count", 0]},
+                                        scale,
+                                    ],
+                                },
+                            },
+                        },
+                    ],
+                )
+                self.db.class_priors.bulk_write(class_ops, ordered=False)
+
+        worker_ids = list(self._batch_worker_to_idx.keys())
+        if not worker_ids:
+            return
+
+        worker_cursor = self.db.worker_sufficient_statistics.find(
+            {"_id": {"$in": worker_ids}},
+            {"confusion_matrix": 1},
+        )
+        worker_conf = {
+            doc["_id"]: doc.get("confusion_matrix", [])
+            for doc in worker_cursor
+        }
+
+        expected_sparse: dict[int, dict[tuple[int, int], float]] = {}
+
+        if isinstance(batch_T, sp.COO):
+            t_coords_T, l_coords_T = batch_T.coords
+            data_T = batch_T.data
+            t_coords_T = t_coords_T.astype(int, copy=False)
+            l_coords_T = l_coords_T.astype(int, copy=False)
+        else:
+            t_coords_T, l_coords_T = np.nonzero(batch_T)
+            data_T = np.asarray(batch_T)[t_coords_T, l_coords_T]
+
+        task_to_classes: dict[int, list[tuple[int, float]]] = {}
+        for t, l, v in zip(t_coords_T, l_coords_T, data_T, strict=False):
+            fv = float(v)
+            if fv <= 0.0:
+                continue
+            task_to_classes.setdefault(int(t), []).append((int(l), fv))
+
+        if isinstance(batch_matrix, sp.COO):
+            t_coords_M, w_coords_M, k_coords_M = batch_matrix.coords
+        else:
+            t_coords_M, w_coords_M, k_coords_M = np.nonzero(batch_matrix)
+
+        for t, w, k in zip(t_coords_M, w_coords_M, k_coords_M, strict=False):
+            entries = task_to_classes.get(int(t))
+            if not entries:
+                continue
+            worker_dict = expected_sparse.setdefault(int(w), {})
+            k_int = int(k)
+            for l, v in entries:
+                key = (l, k_int)
+                worker_dict[key] = worker_dict.get(key, 0.0) + v
+
+        updates: list[UpdateOne] = []
+        for worker_name, batch_worker_idx in self._batch_worker_to_idx.items():
+            existing_matrix = worker_conf.get(worker_name, [])
+            entry_dict = {
+                (e["from_class"], e["to_class"]): e for e in existing_matrix
+            }
+
+            for entry in entry_dict.values():
+                entry["prob"] *= scale
+
+            worker_expected = expected_sparse.get(batch_worker_idx, {})
+            for (i, j), count in worker_expected.items():
+                if count <= 0.0:
+                    continue
+                from_class = self._global_idx_to_class.get(i)
+                to_class = self._global_idx_to_class.get(j)
+                if from_class is None or to_class is None:
+                    continue
+
+                key = (from_class, to_class)
+                if key in entry_dict:
+                    entry_dict[key]["prob"] += gamma * float(count)
+                else:
+                    entry_dict[key] = {
+                        "from_class": from_class,
+                        "to_class": to_class,
+                        "prob": gamma * float(count),
+                    }
+
+            updates.append(
+                UpdateOne(
+                    {"_id": worker_name},
+                    {"$set": {"confusion_matrix": list(entry_dict.values())}},
+                    upsert=True,
+                ),
+            )
+
+        if updates:
+            with self.mongo_timer("online update worker confusion matrices"):
+                self.db.worker_sufficient_statistics.bulk_write(
+                    updates,
+                    ordered=False,
+                )
+
+    def _load_rho_from_db(self) -> np.ndarray:
+        """Load the rho array from MongoDB into a numpy array."""
+        rho = np.full(self.n_classes, 1e-12)
+
+        for doc in self.db.class_priors.find({}, {"_id": 1, "prob": 1}):
+            class_id = str(doc["_id"])
+            idx = self._global_class_to_idx.get(class_id)
+            if idx is not None:
+                rho[idx] = doc["prob"]
+
+        return sp.COO(rho)
+
+    def _online_update_T(
+        self,
+        batch_T: sp.COO,
+        top_k: int | None = None,
+    ) -> None:
+        gamma = self.gamma
+        scale = 1 - gamma
+
+        batch_T = self._apply_topk(batch_T, top_k)
+
+        row_idx, col_idx = batch_T.coords
+        data = batch_T.data * gamma
+
+        # Sparse accumulator: task -> class -> value
+        contrib: dict[str, dict[str, float]] = {}
+
+        for t, c, v in zip(row_idx, col_idx, data, strict=False):
+            task = self._batch_idx_to_task[t]
+            cls = self._global_idx_to_class[c]
+
+            task_dict = contrib.setdefault(task, {})
+            task_dict[cls] = task_dict.get(cls, 0.0) + float(v)
+
+        task_names = list(contrib.keys())
+
+        # Fetch existing probabilities
+        docs = self.db.task_class_probs.find(
+            {"_id": {"$in": task_names}},
+            {"_id": 1, "probs": 1},
+        )
+
+        existing = {doc["_id"]: doc.get("probs", {}) for doc in docs}
+
+        updates = []
+
+        for task in task_names:
+            current = {
+                cls: val * scale for cls, val in existing.get(task, {}).items()
+            }
+
+            # add batch contributions
+            for cls, val in contrib[task].items():
+                current[cls] = current.get(cls, 0.0) + val
+
+            if top_k is not None and len(current) > top_k:
+                current = dict(
+                    sorted(current.items(), key=lambda x: x[1], reverse=True)[
+                        :top_k
+                    ],
+                )
+
+            updates.append(
+                UpdateOne(
+                    {"_id": task},
+                    {
+                        "$set": {
+                            f"probs.{cls}": val for cls, val in current.items()
+                        },
+                    },
+                    upsert=True,
+                ),
+            )
+
+        if updates:
+            with self.mongo_timer("online update task class probs"):
+                self.db.task_class_probs.bulk_write(updates, ordered=False)
+
+        self._normalize_probs(task_names)
+
+
+class SparseMongoAdaptiveStepOnlineAlgorithm(SparseMongoOnlineAlgorithm):
+    """
+    Online EM with class-dependent adaptive step sizes.
+
+    gamma_l = deltaS_l / (S_l + deltaS_l)
+
+    where
+        S_l   = previous sufficient statistics
+        deltaS_l  = batch expected counts
+    """
+
+    def _compute_gamma_per_class(
+        self,
+        batch_class_counts: sp.COO | np.ndarray,
+    ) -> tuple[dict[str, float], dict[str, float]]:
+        """
+        Returns
+        gamma_l  : dict[class_name -> gamma_l]
+        scale_l  : dict[class_name -> (1-gamma_l)]
+        """
+
+        class_ids = list(self._batch_class_to_idx.keys())
+
+        cursor = self.db.class_priors.find(
+            {"_id": {"$in": class_ids}},
+            {"_id": 1, "count": 1},
+        )
+
+        prev_counts = {
+            doc["_id"]: float(doc.get("count", 0.0)) for doc in cursor
+        }
+
+        gamma = {}
+        scale = {}
+
+        for cls, idx in self._batch_class_to_idx.items():
+            delta = float(batch_class_counts[idx])
+            prev = prev_counts.get(cls, 0.0)
+
+            denom = prev + delta
+
+            if denom == 0:
+                g = 1.0
+            else:
+                g = delta / denom
+
+            gamma[cls] = g
+            scale[cls] = 1.0 - g
+
+        return gamma, scale
+
+    def _online_update_sufficient_statistics(
+        self,
+        batch_T: np.ndarray | sp.COO,
+        batch_matrix: sp.COO | np.ndarray,
+        top_k: int | None = None,
+    ) -> None:
+        """
+        Adaptive online update using class-dependent step sizes.
+
+        S_l <- (1 - gamma_l) S_l + gamma_l deltaS_l
+        S_{l,k}^{(j)} <- (1 - gamma_l) S_{l,k}^{(j)} + gamma_l deltaS_{l,k}^{(j)}
+        If top_k is None -> keep all classes.
+        If top_k is set   -> keep only top_k classes per task.
+        """
+
+        batch_T = self._apply_topk(batch_T, top_k)
+
+        class_counts = batch_T.sum(axis=0)
+
+        gamma_l, scale_l = self._compute_gamma_per_class(class_counts)
+
+        class_ops = []
+
+        for class_name, idx in self._batch_class_to_idx.items():
+            gamma = gamma_l[class_name]
+            scale = scale_l[class_name]
+
+            delta = float(class_counts[idx]) * gamma
+
+            class_ops.append(
+                UpdateOne(
+                    {"_id": class_name},
+                    [
+                        {
+                            "$set": {
+                                "count": {
+                                    "$add": [
+                                        {
+                                            "$multiply": [
+                                                {"$ifNull": ["$count", 0]},
+                                                scale,
+                                            ],
+                                        },
+                                        delta,
+                                    ],
+                                },
+                            },
+                        },
+                    ],
+                    upsert=True,
+                ),
+            )
+
+        if class_ops:
+            with self.mongo_timer("adaptive update class sufficient stats"):
+                self.db.class_priors.bulk_write(class_ops, ordered=False)
+
+        worker_ids = list(self._batch_worker_to_idx.keys())
+
+        worker_cursor = self.db.worker_sufficient_statistics.find(
+            {"_id": {"$in": worker_ids}},
+            {"confusion_matrix": 1},
+        )
+
+        worker_conf = {
+            doc["_id"]: doc.get("confusion_matrix", [])
+            for doc in worker_cursor
+        }
+
+        expected_sparse: dict[int, dict[tuple[int, int], float]] = {}
+
+        t_coords_T, l_coords_T = batch_T.coords
+        data_T = batch_T.data
+
+        task_to_classes: dict[int, list[tuple[int, float]]] = {}
+
+        for t, l, v in zip(t_coords_T, l_coords_T, data_T):
+            task_to_classes.setdefault(int(t), []).append(
+                (int(l), float(v)),
+            )
+
+        t_coords_M, w_coords_M, k_coords_M = batch_matrix.coords
+
+        for t, w, k in zip(t_coords_M, w_coords_M, k_coords_M):
+            entries = task_to_classes.get(int(t))
+            if not entries:
+                continue
+
+            worker_dict = expected_sparse.setdefault(int(w), {})
+
+            k_int = int(k)
+
+            for l, v in entries:
+                key = (l, k_int)
+                worker_dict[key] = worker_dict.get(key, 0.0) + v
+
+        updates = []
+
+        for worker_name, batch_worker_idx in self._batch_worker_to_idx.items():
+            existing_matrix = worker_conf.get(worker_name, [])
+
+            entry_dict = {
+                (e["from_class"], e["to_class"]): e for e in existing_matrix
+            }
+
+            for entry in entry_dict.values():
+                scale = scale_l.get(entry["from_class"], 1.0)
+                entry["prob"] *= scale
+
+            worker_expected_sparse = expected_sparse.get(batch_worker_idx, {})
+
+            for (i, j), count in worker_expected_sparse.items():
+                if count <= 0:
+                    continue
+
+                from_class = self._batch_idx_to_class.get(i)
+                to_class = self._batch_idx_to_class.get(j)
+
+                if from_class is None or to_class is None:
+                    continue
+
+                gamma = gamma_l[from_class]
+
+                key = (from_class, to_class)
+
+                if key in entry_dict:
+                    entry_dict[key]["prob"] += gamma * count
+                else:
+                    entry_dict[key] = {
+                        "from_class": from_class,
+                        "to_class": to_class,
+                        "prob": gamma * count,
+                    }
+
+            updates.append(
+                UpdateOne(
+                    {"_id": worker_name},
+                    {"$set": {"confusion_matrix": list(entry_dict.values())}},
+                    upsert=True,
+                ),
+            )
+
+        if updates:
+            with self.mongo_timer("adaptive update worker confusion matrices"):
+                self.db.worker_sufficient_statistics.bulk_write(
+                    updates,
+                    ordered=False,
+                )
+
+
+class SparseMongoAdaptiveStepOnlineGlobalAlgorithm(SparseMongoOnlineAlgorithm):
+    """
+    Online EM with class-dependent adaptive step sizes.
+
+    gamma_l = deltaS_l / (S_l + deltaS_l)
+
+    where
+        S_l   = previous sufficient statistics
+        deltaS_l  = batch expected counts
+    """
+
+    @profile
+    def _process_batch_to_matrix(
+        self,
+        batch: AnswersDict,
+    ) -> sp.COO:
+        """Convert a batch of task assignments to a matrix format."""
+
+        coords = [[], [], []]  # [task_indices, worker_indices, class_indices]
+        for task_id, worker_class in batch.items():
+            for worker_id, class_id in worker_class.items():
+                task_index = self._batch_task_to_idx[task_id]
+                worker_index = self._batch_worker_to_idx[worker_id]
+                class_index = self._global_class_to_idx[class_id]
+
+                coords[0].append(task_index)
+                coords[1].append(worker_index)
+                coords[2].append(class_index)
+
+        shape = (
+            len(self._batch_task_to_idx),
+            len(self._batch_worker_to_idx),
+            len(self._global_class_to_idx),
+        )
+
+        return sp.COO(coords, data=True, shape=shape)
+
+    def _compute_gamma_per_class(
+        self,
+        batch_class_counts: sp.COO | np.ndarray,
+    ) -> tuple[dict[str, float], dict[str, float]]:
+        """
+        Returns
+        gamma_l  : dict[class_name -> gamma_l]
+        scale_l  : dict[class_name -> (1-gamma_l)]
+        """
+
+        class_ids = list(self._global_class_to_idx.keys())
+
+        cursor = self.db.class_priors.find(
+            {"_id": {"$in": class_ids}},
+            {"_id": 1, "count": 1},
+        )
+
+        prev_counts = {
+            doc["_id"]: float(doc.get("count", 0.0)) for doc in cursor
+        }
+
+        gamma = {}
+        scale = {}
+
+        for cls, idx in self._global_class_to_idx.items():
+            delta = float(batch_class_counts[idx])
+            prev = prev_counts.get(cls, 0.0)
+
+            denom = prev + delta
+
+            if denom == 0:
+                g = 1.0
+            else:
+                g = delta / denom
+
+            gamma[cls] = g
+            scale[cls] = 1.0 - g
+
+        return gamma, scale
+
+    def _online_update_sufficient_statistics(
+        self,
+        batch_T: np.ndarray | sp.COO,
+        batch_matrix: sp.COO | np.ndarray,
+        top_k: int | None = None,
+    ) -> None:
+        """
+        Adaptive online update using class-dependent step sizes.
+
+        S_l <- (1 - gamma_l) S_l + gamma_l deltaS_l
+        S_{l,k}^{(j)} <- (1 - gamma_l) S_{l,k}^{(j)} + gamma_l deltaS_{l,k}^{(j)}
+        If top_k is None -> keep all classes.
+        If top_k is set   -> keep only top_k classes per task.
+        """
+
+        batch_T = self._apply_topk(batch_T, top_k)
+
+        class_counts = batch_T.sum(axis=0)
+
+        gamma_l, scale_l = self._compute_gamma_per_class(class_counts)
+
+        class_ops = []
+
+        for class_name, idx in self._global_class_to_idx.items():
+            gamma = gamma_l[class_name]
+            scale = scale_l[class_name]
+
+            delta = float(class_counts[idx]) * gamma
+
+            class_ops.append(
+                UpdateOne(
+                    {"_id": class_name},
+                    [
+                        {
+                            "$set": {
+                                "count": {
+                                    "$add": [
+                                        {
+                                            "$multiply": [
+                                                {"$ifNull": ["$count", 0]},
+                                                scale,
+                                            ],
+                                        },
+                                        delta,
+                                    ],
+                                },
+                            },
+                        },
+                    ],
+                    upsert=True,
+                ),
+            )
+
+        if class_ops:
+            with self.mongo_timer("adaptive update class sufficient stats"):
+                self.db.class_priors.bulk_write(class_ops, ordered=False)
+
+        worker_ids = list(self._batch_worker_to_idx.keys())
+
+        worker_cursor = self.db.worker_sufficient_statistics.find(
+            {"_id": {"$in": worker_ids}},
+            {"confusion_matrix": 1},
+        )
+
+        worker_conf = {
+            doc["_id"]: doc.get("confusion_matrix", [])
+            for doc in worker_cursor
+        }
+
+        expected_sparse: dict[int, dict[tuple[int, int], float]] = {}
+
+        t_coords_T, l_coords_T = batch_T.coords
+        data_T = batch_T.data
+
+        task_to_classes: dict[int, list[tuple[int, float]]] = {}
+
+        for t, l, v in zip(t_coords_T, l_coords_T, data_T):
+            task_to_classes.setdefault(int(t), []).append(
+                (int(l), float(v)),
+            )
+
+        t_coords_M, w_coords_M, k_coords_M = batch_matrix.coords
+
+        for t, w, k in zip(t_coords_M, w_coords_M, k_coords_M):
+            entries = task_to_classes.get(int(t))
+            if not entries:
+                continue
+
+            worker_dict = expected_sparse.setdefault(int(w), {})
+
+            k_int = int(k)
+
+            for l, v in entries:
+                key = (l, k_int)
+                worker_dict[key] = worker_dict.get(key, 0.0) + v
+
+        updates = []
+
+        for worker_name, batch_worker_idx in self._batch_worker_to_idx.items():
+            existing_matrix = worker_conf.get(worker_name, [])
+
+            entry_dict = {
+                (e["from_class"], e["to_class"]): e for e in existing_matrix
+            }
+
+            for entry in entry_dict.values():
+                scale = scale_l.get(entry["from_class"], 1.0)
+                entry["prob"] *= scale
+
+            worker_expected_sparse = expected_sparse.get(batch_worker_idx, {})
+
+            for (i, j), count in worker_expected_sparse.items():
+                if count <= 0:
+                    continue
+
+                from_class = self._batch_idx_to_class.get(i)
+                to_class = self._batch_idx_to_class.get(j)
+
+                if from_class is None or to_class is None:
+                    continue
+
+                gamma = gamma_l[from_class]
+
+                key = (from_class, to_class)
+
+                if key in entry_dict:
+                    entry_dict[key]["prob"] += gamma * count
+                else:
+                    entry_dict[key] = {
+                        "from_class": from_class,
+                        "to_class": to_class,
+                        "prob": gamma * count,
+                    }
+
+            updates.append(
+                UpdateOne(
+                    {"_id": worker_name},
+                    {"$set": {"confusion_matrix": list(entry_dict.values())}},
+                    upsert=True,
+                ),
+            )
+
+        if updates:
+            with self.mongo_timer("adaptive update worker confusion matrices"):
+                self.db.worker_sufficient_statistics.bulk_write(
+                    updates,
+                    ordered=False,
+                )
+
+    def _online_update_T(
+        self,
+        batch_T: sp.COO,
+        top_k: int | None = None,
+    ) -> None:
+        gamma = self.gamma
+        scale = 1 - gamma
+
+        batch_T = self._apply_topk(batch_T, top_k)
+
+        row_idx, col_idx = batch_T.coords
+        data = batch_T.data * gamma
+
+        # Sparse accumulator: task -> class -> value
+        contrib: dict[str, dict[str, float]] = {}
+
+        for t, c, v in zip(row_idx, col_idx, data, strict=False):
+            task = self._batch_idx_to_task[t]
+            cls = self._global_idx_to_class[c]
+
+            task_dict = contrib.setdefault(task, {})
+            task_dict[cls] = task_dict.get(cls, 0.0) + float(v)
+
+        task_names = list(contrib.keys())
+
+        # Fetch existing probabilities
+        docs = self.db.task_class_probs.find(
+            {"_id": {"$in": task_names}},
+            {"_id": 1, "probs": 1},
+        )
+
+        existing = {doc["_id"]: doc.get("probs", {}) for doc in docs}
+
+        updates = []
+
+        for task in task_names:
+            current = {
+                cls: val * scale for cls, val in existing.get(task, {}).items()
+            }
+
+            # add batch contributions
+            for cls, val in contrib[task].items():
+                current[cls] = current.get(cls, 0.0) + val
+
+            if top_k is not None and len(current) > top_k:
+                current = dict(
+                    sorted(current.items(), key=lambda x: x[1], reverse=True)[
+                        :top_k
+                    ],
+                )
+
+            updates.append(
+                UpdateOne(
+                    {"_id": task},
+                    {
+                        "$set": {
+                            f"probs.{cls}": val for cls, val in current.items()
+                        },
+                    },
+                    upsert=True,
+                ),
+            )
+
+        if updates:
+            with self.mongo_timer("online update task class probs"):
+                self.db.task_class_probs.bulk_write(updates, ordered=False)
+
+        self._normalize_probs(task_names)

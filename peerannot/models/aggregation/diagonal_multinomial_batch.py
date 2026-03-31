@@ -456,9 +456,6 @@ class WeightedDiagonalMultinomialBatchMongo(
     def _get_workers_weights(self, worker_ids=None):
         pipeline = []
 
-        if worker_ids is not None:
-            pipeline.append({"$match": {"_id": {"$in": list(worker_ids)}}})
-
         pipeline = [
             {
                 "$project": {
@@ -477,6 +474,8 @@ class WeightedDiagonalMultinomialBatchMongo(
             },
         ]
 
+        if worker_ids is not None:
+            pipeline.append({"$match": {"_id": {"$in": list(worker_ids)}}})
         return {
             doc["_id"]: doc["weight"]
             for doc in self.db.worker_confusion_matrices.aggregate(pipeline)

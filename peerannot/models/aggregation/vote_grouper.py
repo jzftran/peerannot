@@ -65,11 +65,14 @@ class VoteGrouper:
     def group_votes_by_blocks(all_votes, blocks):
         """Organize tasks by the dominant block of their labels."""
         grouped = defaultdict(dict)
+        fallback_block_id = max(blocks.values(), default=-1) + 1
         for task_id, votes in all_votes.items():
             labels = list(votes.values())
             block_counts = Counter(blocks[l] for l in labels if l in blocks)
 
             if not block_counts:
+                grouped[fallback_block_id][task_id] = votes
+
                 continue
 
             dominant_block = block_counts.most_common(1)[0][0]

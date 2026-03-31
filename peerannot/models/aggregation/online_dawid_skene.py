@@ -13,6 +13,7 @@ from peerannot.models.aggregation.dawid_skene_batch import (
 )
 from peerannot.models.aggregation.mongo_online_helpers import (
     SparseMongoOnlineAlgorithm,
+    SparseMongoOnlineGlobalAlgorithm,
 )
 
 
@@ -119,7 +120,7 @@ class MajorityVotingOnlineDawidSkene(
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.n_processed = 0
-        self._total_task_count = 0
+        self._n_task = 0
 
     @profile
     def _load_rho_from_db(self) -> sp.COO:
@@ -197,27 +198,27 @@ class MajorityVotingOnlineDawidSkene(
         return sp.COO(pi)
 
     @property
-    def total_task_count(self) -> int:
+    def n_task(self) -> int:
         """
         Returns the total task count. If manually set, use that value.
         Otherwise, use estimated_document_count().
         """
         return (
-            self._total_task_count
-            if self._total_task_count is not None
+            self._n_task
+            if self._n_task is not None
             else self.db.task_mapping.estimated_document_count()
         )
 
-    @total_task_count.setter
-    def total_task_count(self, value: int):
+    @n_task.setter
+    def n_task(self, value: int):
         """
         Allows manual setting of the total task count.
         """
-        self._total_task_count = value
+        self._n_task = value
 
     @property
     def gamma(self):
-        n = self.total_task_count
+        n = self.n_task
         tau = 1000
         kappa = 0.6
         return (n + tau) ** -kappa
@@ -263,7 +264,7 @@ class MajorityVotingOnlineDawidSkene(
 
         for batch_task_idx in global_task_to_idx.values():
             self._drop_batch_mappings()
-            self.total_task_count += 1
+            self.n_task += 1
 
             mask = batch_matrix.coords[0] == batch_task_idx
             task_w = batch_matrix.coords[1][mask]
@@ -327,3 +328,132 @@ class WeightedMajorityVotingOnlineDawidSkene(
 
 
 # %%
+class MinibatchOnlineDawidSkeneGlobal(
+    MinibatchOnlineDawidSkene,
+    SparseMongoOnlineGlobalAlgorithm,
+):
+    def _load_pi_for_worker_db(self, worker_id: str) -> np.ndarray:
+        """
+        Load worker confusion matrix stored with class-name keys.
+        Missing entries fall back to a default prior.
+        """
+
+        n_classes = self.n_classes
+        eps = 1e-12
+
+        if n_classes <= 1:
+            default_diag = 1.0
+            default_off_diag = 0.0
+        else:
+            default_diag = 0.7
+            default_off_diag = (1.0 - default_diag) / (n_classes - 1)
+
+        confusion_matrix = np.full(
+            (n_classes, n_classes),
+            default_off_diag,
+            dtype=float,
+        )
+
+        np.fill_diagonal(confusion_matrix, default_diag)
+
+        doc = self.db.worker_confusion_matrices.find_one({"_id": worker_id})
+
+        if not doc or "confusion_matrix" not in doc:
+            return confusion_matrix
+
+        row_updates: dict[int, dict[int, float]] = {}
+
+        for entry in doc["confusion_matrix"]:
+            from_name = entry["from_class"]
+            to_name = entry["to_class"]
+
+            if (
+                from_name not in self._global_class_to_idx
+                or to_name not in self._global_class_to_idx
+            ):
+                continue
+
+            i = self._global_class_to_idx[from_name]
+            j = self._global_class_to_idx[to_name]
+            prob = float(entry["prob"])
+
+            row_updates.setdefault(i, {})[j] = prob
+
+        for row_idx, col_probs in row_updates.items():
+            unspecified = [j for j in range(n_classes) if j not in col_probs]
+
+            for j, prob in col_probs.items():
+                confusion_matrix[row_idx, j] = prob
+
+            for j in unspecified:
+                confusion_matrix[row_idx, j] = eps
+
+            confusion_matrix[row_idx] /= confusion_matrix[row_idx].sum()
+
+        return confusion_matrix
+
+    def _load_pi_from_db(self) -> sp.COO:
+        pi = np.zeros(
+            (len(self._batch_worker_to_idx), self.n_classes, self.n_classes),
+        )
+
+        for worker_id, widx in self._batch_worker_to_idx.items():
+            pi[widx, :, :] = self._load_pi_for_worker_db(
+                worker_id,
+            )
+
+        return sp.COO(pi)
+
+    def _em_loop_on_batch(
+        self,
+        batch_matrix: sp.COO,
+        epsilon: float = 1e-6,
+        maxiter: int = 50,
+    ) -> list[float]:
+        """Stays the same, just for debug"""
+        _ = maxiter, epsilon
+
+        ll: list[float] = []
+
+        rho = self._load_rho_from_db()
+        pi = self._load_pi_from_db()
+        # print(f"{rho.todense()=}")
+        print(f"{pi.todense()=}")
+        print(f"{batch_matrix.todense()=}")
+        T, denom = self._e_step(
+            batch_matrix,
+            pi,
+            rho,
+        )
+
+        print(f"{T.todense()=}")
+        print(f"{self._batch_worker_to_idx=}")
+        print(f"{self._batch_class_to_idx=}")
+        # print(f"{self._batch_task_to_idx=}")
+        print(f"{self._global_class_to_idx=}")
+        self._online_update(
+            T,
+            rho,
+            pi,
+            batch_matrix,
+        )
+
+        likelihood = float(np.sum(np.log(denom + 1e-12)))
+        ll.append(likelihood)
+
+        return ll
+
+
+# batch1 = {0: {0: "a", 1: "b", 2: "b"}, 1: {0: "b", 1: "b", 3: "b"}}
+# batch2 = {2: {0: "b", 1: "a", 3: "a"}, 3: {0: "b", 3: "c", 2: "c"}}
+# batch3 = {4: {0: "b"}}
+
+# m = MinibatchOnlineDawidSkene()
+# m.drop()
+# m.process_batch(batch1)
+
+# # %%
+# m.process_batch(batch2)
+# # %%
+# m.process_batch(batch3)
+# m.pi

@@ -11,6 +11,7 @@ from tqdm.auto import tqdm
 
 from peerannot.models.aggregation.mongo_online_helpers import (
     SparseMongoBatchAlgorithm,
+    chunked,
 )
 from peerannot.models.aggregation.warnings_errors import NotInitialized
 from peerannot.models.template import CrowdModel
@@ -421,6 +422,7 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
         class_names = list(self._batch_class_to_idx.keys())
         int_labels = []
         all_int = True
+
         for cls in class_names:
             try:
                 int_labels.append(int(self._unescape_id(cls)))
@@ -449,20 +451,28 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
             [] for _ in range(n_task)
         ]
 
-        for doc in self.db.user_votes.find(
-            {"_id": {"$in": list(task_to_idx.keys())}},
-            {"_id": 1, "votes": 1},
-        ):
-            task_id = doc["_id"]
-            task_idx = task_to_idx.get(task_id)
-            if task_idx is None:
-                continue
-            for worker_id, label in doc.get("votes", {}).items():
-                worker_idx = worker_to_idx.get(worker_id)
-                class_idx = class_to_idx.get(label)
-                if worker_idx is None or class_idx is None:
+        task_ids_list = list(task_to_idx.keys())
+
+        for batch in chunked(task_ids_list, 5000):
+            cursor = self.db.user_votes.find(
+                {"_id": {"$in": batch}},
+                {"_id": 1, "votes": 1},
+            )
+
+            for doc in cursor:
+                task_id = doc["_id"]
+                task_idx = task_to_idx.get(task_id)
+                if task_idx is None:
                     continue
-                votes_by_task[task_idx].append((worker_idx, class_idx))
+
+                for worker_id, label in doc.get("votes", {}).items():
+                    worker_idx = worker_to_idx.get(worker_id)
+                    class_idx = class_to_idx.get(label)
+
+                    if worker_idx is None or class_idx is None:
+                        continue
+
+                    votes_by_task[task_idx].append((worker_idx, class_idx))
 
         task_ids = [self._batch_idx_to_task[i] for i in range(n_task)]
 
@@ -486,12 +496,26 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
         n_classes: int,
         weights: np.ndarray,
     ) -> np.ndarray:
-        weighted_votes = np.zeros((n_task, n_classes), dtype=np.float64)
-
+        # Accumulate weighted votes per task
+        task_scores = [defaultdict(float) for _ in range(n_task)]
         for task_idx, worker_idx, class_idx in all_votes:
-            weighted_votes[task_idx, class_idx] += weights[worker_idx]
+            task_scores[task_idx][class_idx] += weights[worker_idx]
 
-        return np.argmax(weighted_votes, axis=1)
+        yhat = np.zeros(n_task, dtype=np.int64)
+        for t in range(n_task):
+            if task_scores[t]:
+                # max with sorted keys to match numpy argmax tie-breaker (lowest index wins)
+                max_val = max(task_scores[t].values())
+                candidate_classes = [
+                    cls
+                    for cls, val in task_scores[t].items()
+                    if val == max_val
+                ]
+                yhat[t] = min(candidate_classes)  # lowest index wins
+            else:
+                yhat[t] = 0
+
+        return yhat
 
     def _get_conf_acc(
         self,
