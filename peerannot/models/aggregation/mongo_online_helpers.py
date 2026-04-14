@@ -364,6 +364,34 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
             v: k for k, v in self._batch_class_to_idx.items()
         }
 
+        self.get_or_create_indices(
+            self.task_mapping,
+            list(self._batch_task_to_idx),
+        )
+        self.get_or_create_indices(
+            self.worker_mapping,
+            list(self._batch_worker_to_idx),
+        )
+        self.get_or_create_indices(
+            self.class_mapping,
+            list(self._batch_class_to_idx),
+        )
+        self._global_class_to_idx = {
+            entry["_id"]: entry["index"]
+            for entry in self.class_mapping.find({})
+        }
+
+        self._global_idx_to_class: ReverseClassMapping = {
+            v: k for k, v in self._global_class_to_idx.items()
+        }
+
+        self._global_task_to_idx = {
+            entry["_id"]: entry["index"]
+            for entry in self.task_mapping.find({})
+        }
+
+        self.n_task = self.db.task_mapping.estimated_document_count()
+
     @profile
     def _process_batch_to_matrix(
         self,
@@ -481,34 +509,6 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
         epsilon: float = 1e-6,
     ) -> list[float]:
         batch_start = time.perf_counter()
-
-        self.get_or_create_indices(
-            self.task_mapping,
-            list(self._batch_task_to_idx),
-        )
-        self.get_or_create_indices(
-            self.worker_mapping,
-            list(self._batch_worker_to_idx),
-        )
-        self.get_or_create_indices(
-            self.class_mapping,
-            list(self._batch_class_to_idx),
-        )
-        self._global_class_to_idx = {
-            entry["_id"]: entry["index"]
-            for entry in self.class_mapping.find({})
-        }
-
-        self._global_idx_to_class: ReverseClassMapping = {
-            v: k for k, v in self._global_class_to_idx.items()
-        }
-
-        self._global_task_to_idx = {
-            entry["_id"]: entry["index"]
-            for entry in self.task_mapping.find({})
-        }
-
-        self.n_task = self.db.task_mapping.estimated_document_count()
 
         ll = self._em_loop_on_batch(
             batch_matrix,
@@ -1166,16 +1166,16 @@ class WeightedBatchAlgorithm(SparseMongoBatchAlgorithm):
         votes: dict[str, str],
         worker_weights: dict[str, float],
     ) -> str:
-        scores = defaultdict(float)
+        scores: dict[str, float] = defaultdict(float)
 
         for worker_id, label in votes.items():
             weight = worker_weights.get(worker_id, 0.0)
             scores[label] += weight
 
-        if not scores:
-            raise ValueError("No valid votes")
-
-        return max(scores.items(), key=lambda x: x[1])[0]
+        label, score = max(scores.items(), key=lambda x: x[1])
+        if score == 0.0:
+            return "-1"
+        return label
 
     def get_answer(self, task_id: Hashable) -> str:
         doc = self.db.user_votes.find_one({"_id": task_id})

@@ -1,9 +1,10 @@
+from __future__ import annotations
+
 import json
 import warnings
 from collections import defaultdict
-from collections.abc import Hashable
+from collections.abc import Hashable, Iterable
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 from pymongo import UpdateOne
@@ -11,6 +12,7 @@ from tqdm.auto import tqdm
 
 from peerannot.models.aggregation.mongo_online_helpers import (
     SparseMongoBatchAlgorithm,
+    WeightedBatchAlgorithm,
     chunked,
 )
 from peerannot.models.aggregation.warnings_errors import NotInitialized
@@ -46,6 +48,8 @@ class PlantNet(CrowdModel):
         authors=None,  # path to txt file containing authors id for each task
         scores=None,  # path to txt file containing scores for each task
         threshold_scores=None,  # threshold for scores
+        *,
+        output_unvalidated: bool = False,
         **kwargs,
     ):
         r"""Compute a weighted majority vote based on the number of identified
@@ -95,6 +99,7 @@ class PlantNet(CrowdModel):
         self.beta = beta
         self.taxa_obs_weight = taxa_obs_weight
         self.taxa_votes_weight = taxa_votes_weight
+        self.output_unvalidated = output_unvalidated
         if self.AI == "ignored":
             for task in self.answers:
                 self.answers[task] = {
@@ -369,7 +374,13 @@ class PlantNet(CrowdModel):
             if not self.path_save.exists():
                 self.path_save.mkdir(parents=True, exist_ok=True)
             np.savetxt(self.path_save / "too_hard.txt", tab, fmt="%1i")
-        return np.vectorize(self.inv_labels.get)(np.array(ans))
+        if self.output_unvalidated:
+            return np.vectorize(self.inv_labels.get)(np.array(ans))
+        return np.where(
+            self.valid,
+            np.vectorize(self.inv_labels.get)(np.array(ans)),
+            -1,
+        )
 
     def get_probas(self):
         """Not available for this strategy, default to `get_answers()`"""
@@ -391,9 +402,11 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
         beta: float = 1,
         theta_conf: float = THETACONF,
         theta_acc: float = THETAACC,
-        authors: Optional[dict[Hashable, Hashable]] = None,
+        authors: dict[Hashable, Hashable] | None = None,
         taxa_obs_weight: float = 1,
         taxa_votes_weight: float = 0.1,
+        *,
+        output_unvalidated: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -404,6 +417,7 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
         self.taxa_obs_weight = taxa_obs_weight
         self.taxa_votes_weight = taxa_votes_weight
         self.authors = authors or {}
+        self.output_unvalidated = output_unvalidated
 
     def _get_weights(self, n_j: np.ndarray) -> np.ndarray:
         return n_j**self.alpha - n_j**self.beta + np.log(2.1)
@@ -741,22 +755,41 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
         if self.n_task == 0:
             raise NotInitialized(self.__class__.__name__)
 
-        idx_to_task = {
-            doc["index"]: doc["_id"]
-            for doc in self.task_mapping.find({}, {"_id": 1, "index": 1})
-        }
-        answers = np.empty(self.n_task, dtype=object)
-        for idx in range(self.n_task):
-            task_name = idx_to_task[idx]
-            doc = self.db.task_class_probs.find_one(
-                {"_id": task_name},
-                {"current_answer": 1},
-            )
-            answers[idx] = (
-                self._unescape_id(doc["current_answer"])
-                if doc and doc.get("current_answer") is not None
-                else None
-            )
+        idx_to_task = [None] * self.n_task
+        task_to_idx = {}
+
+        for doc in self.task_mapping.find({}, {"_id": 1, "index": 1}):
+            idx = doc["index"]
+            task_id = doc["_id"]
+            idx_to_task[idx] = task_id
+            task_to_idx[task_id] = idx
+
+        answers = np.full(self.n_task, "-1", dtype=object)
+
+        task_ids_list = list(task_to_idx.keys())
+
+        for batch in chunked(task_ids_list, 5000):
+            if self.output_unvalidated:
+                cursor = self.db.task_class_probs.find(
+                    {"_id": {"$in": batch}},
+                    {"_id": 1, "current_answer": 1},
+                )
+            else:
+                cursor = self.db.task_class_probs.find(
+                    {"$and": [{"_id": {"$in": batch}}, {"valid": {"$eq": 1}}]},
+                    {"_id": 1, "current_answer": 1},
+                )
+
+            for doc in cursor:
+                task_id = doc["_id"]
+                idx = task_to_idx.get(task_id)
+                if idx is None:
+                    continue
+
+                ans = doc.get("current_answer")
+                if ans is not None:
+                    answers[idx] = self._unescape_id(ans)
+
         return answers
 
     def get_probas(self) -> np.ndarray:
@@ -782,3 +815,47 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
 
     def _m_step(self, batch_matrix, batch_T):
         raise NotImplementedError("PlantNetMongo does not use EM M-step.")
+
+
+class WeightedPlantNetMongo(WeightedBatchAlgorithm, PlantNetMongo):
+    def __init__(
+        self,
+        alpha=1,
+        beta=1,
+        theta_conf=THETACONF,
+        theta_acc=THETAACC,
+        authors=None,
+        taxa_obs_weight=1,
+        taxa_votes_weight=0.1,
+        **kwargs,
+    ):
+        super().__init__(
+            alpha,
+            beta,
+            theta_conf,
+            theta_acc,
+            authors,
+            taxa_obs_weight,
+            taxa_votes_weight,
+            **kwargs,
+        )
+
+    def _get_workers_weights(
+        self,
+        worker_ids: Iterable[str] | None = None,
+    ) -> dict[str, float]:
+        if worker_ids:
+            return {
+                doc["_id"]: doc["weight"]
+                for doc in self.db.worker_confusion_matrices.find(
+                    {"_id": {"$in": list(worker_ids)}},
+                    {"_id": 1, "weight": 1},
+                )
+            }
+        return {
+            doc["_id"]: doc["weight"]
+            for doc in self.db.worker_confusion_matrices.find(
+                {},
+                {"_id": 1, "weight": 1},
+            )
+        }
