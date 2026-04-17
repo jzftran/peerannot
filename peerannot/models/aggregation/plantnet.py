@@ -42,6 +42,8 @@ class PlantNet(CrowdModel):
         parrots="ignored",
         alpha=1,
         beta=1,
+        theta_conf: float = THETACONF,
+        theta_acc: float = THETAACC,
         taxa_obs_weight=1,
         taxa_votes_weight=0.1,
         AIweight=1,  # if AI is fixed or invalidating
@@ -97,6 +99,8 @@ class PlantNet(CrowdModel):
         self.parrots = parrots
         self.alpha = alpha
         self.beta = beta
+        self.theta_conf = theta_conf
+        self.theta_acc = theta_acc
         self.taxa_obs_weight = taxa_obs_weight
         self.taxa_votes_weight = taxa_votes_weight
         self.output_unvalidated = output_unvalidated
@@ -259,7 +263,11 @@ class PlantNet(CrowdModel):
 
         """
         valid = np.zeros(self.n_task)
-        mask = np.where((conf > THETACONF) & (acc > THETAACC), True, False)
+        mask = np.where(
+            (conf > self.theta_conf) & (acc > self.theta_acc),
+            True,
+            False,
+        )
         valid[mask] = 1
         return valid
 
