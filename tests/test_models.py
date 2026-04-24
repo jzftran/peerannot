@@ -146,9 +146,10 @@ def test_plantnet():
         beta=0.2,
         AI="ignored",
         authors=None,
+        output_unvalidated=True,
     )
     pn.run(maxiter=2)
     y = pn.get_answers()
     expected = np.array([1, 0, 1])
     assert y.shape == (3,)
-    assert all([e == y_ for e, y_ in zip(expected, y)])
+    np.testing.assert_array_equal(expected, y)

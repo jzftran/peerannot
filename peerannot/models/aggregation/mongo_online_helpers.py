@@ -17,7 +17,7 @@ import numpy as np
 import sparse as sp
 from annotated_types import Ge, Gt
 from line_profiler import profile
-from pymongo import MongoClient, UpdateOne
+from pymongo import MongoClient, ReturnDocument, UpdateOne
 from tqdm import tqdm
 
 from peerannot.helpers.logging import BatchMongoLoggingMixin
@@ -205,15 +205,11 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
 
     @property
     def n_classes(self) -> int:
-        return self.class_mapping.count_documents({})
+        return self.class_mapping.estimated_document_count()
 
     @property
     def n_workers(self) -> int:
-        return self.worker_mapping.count_documents({})
-
-    @property
-    def n_task(self) -> int:
-        return self.task_mapping.count_documents({})
+        return self.worker_mapping.estimated_document_count()
 
     @property
     def n_task(self) -> int:
@@ -221,7 +217,7 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
         Returns estimated document count using estimated_document_count()
         """
 
-        if self._n_task is None:
+        if not self._n_task:
             self._n_task = self.db.task_mapping.estimated_document_count()
         return self._n_task
 
@@ -298,6 +294,7 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
 
     def get_or_create_indices(self, collection, keys: list[Hashable]) -> dict:
         result = {}
+        counters = collection.database.counters
 
         for batch in chunked(keys, CHUNK_SIZE):
             existing_docs = collection.find(
@@ -306,14 +303,31 @@ class MongoBatchAlgorithm(ABC, BatchMongoLoggingMixin):
             )
             existing_map = {doc["_id"]: doc["index"] for doc in existing_docs}
 
-            missing = [k for k in batch if k not in existing_map]
+            missing = list(
+                dict.fromkeys(k for k in batch if k not in existing_map),
+            )
 
             if missing:
-                counter = collection.database.counters.find_one_and_update(
+                max_existing = collection.find_one(
+                    {},
+                    {"index": 1},
+                    sort=[("index", -1)],
+                )
+                next_available = (
+                    0 if max_existing is None else max_existing["index"] + 1
+                )
+
+                counters.update_one(
+                    {"_id": collection.name},
+                    {"$max": {"seq": next_available}},
+                    upsert=True,
+                )
+
+                counter = counters.find_one_and_update(
                     {"_id": collection.name},
                     {"$inc": {"seq": len(missing)}},
                     upsert=True,
-                    return_document=True,
+                    return_document=ReturnDocument.AFTER,
                 )
 
                 start_index = counter["seq"] - len(missing)

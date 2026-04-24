@@ -429,41 +429,6 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
         self.authors = authors or {}
         self.output_unvalidated = output_unvalidated
 
-    def get_or_create_indices(self, collection, keys: list[Hashable]) -> dict:
-        if not keys:
-            return {}
-
-        unique_keys = list(dict.fromkeys(keys))
-        result = {}
-
-        for batch in chunked(unique_keys, CHUNK_SIZE):
-            existing_docs = collection.find(
-                {"_id": {"$in": batch}},
-                {"_id": 1, "index": 1},
-            )
-            result.update({doc["_id"]: doc["index"] for doc in existing_docs})
-
-        missing = [key for key in unique_keys if key not in result]
-        if not missing:
-            return result
-
-        start_index = collection.count_documents({})
-        docs = [
-            {"_id": key, "index": start_index + offset}
-            for offset, key in enumerate(missing)
-        ]
-        collection.insert_many(docs, ordered=True)
-
-        for offset, key in enumerate(missing):
-            result[key] = start_index + offset
-
-        collection.database.counters.update_one(
-            {"_id": collection.name},
-            {"$set": {"seq": start_index + len(missing)}},
-            upsert=True,
-        )
-        return result
-
     def _get_weights(self, n_j: np.ndarray) -> np.ndarray:
         return n_j**self.alpha - n_j**self.beta + np.log(2.1)
 
