@@ -21,6 +21,8 @@ from peerannot.models.template import CrowdModel
 THETACONF = 2
 THETAACC = 0.7
 
+CHUNK_SIZE = 5000
+
 
 class PlantNet(CrowdModel):
     """
@@ -427,6 +429,41 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
         self.authors = authors or {}
         self.output_unvalidated = output_unvalidated
 
+    def get_or_create_indices(self, collection, keys: list[Hashable]) -> dict:
+        if not keys:
+            return {}
+
+        unique_keys = list(dict.fromkeys(keys))
+        result = {}
+
+        for batch in chunked(unique_keys, CHUNK_SIZE):
+            existing_docs = collection.find(
+                {"_id": {"$in": batch}},
+                {"_id": 1, "index": 1},
+            )
+            result.update({doc["_id"]: doc["index"] for doc in existing_docs})
+
+        missing = [key for key in unique_keys if key not in result]
+        if not missing:
+            return result
+
+        start_index = collection.count_documents({})
+        docs = [
+            {"_id": key, "index": start_index + offset}
+            for offset, key in enumerate(missing)
+        ]
+        collection.insert_many(docs, ordered=True)
+
+        for offset, key in enumerate(missing):
+            result[key] = start_index + offset
+
+        collection.database.counters.update_one(
+            {"_id": collection.name},
+            {"$set": {"seq": start_index + len(missing)}},
+            upsert=True,
+        )
+        return result
+
     def _get_weights(self, n_j: np.ndarray) -> np.ndarray:
         return n_j**self.alpha - n_j**self.beta + np.log(2.1)
 
@@ -475,7 +512,7 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
 
         task_ids_list = list(task_to_idx.keys())
 
-        for batch in chunked(task_ids_list, 5000):
+        for batch in chunked(task_ids_list, CHUNK_SIZE):
             cursor = self.db.user_votes.find(
                 {"_id": {"$in": batch}},
                 {"_id": 1, "votes": 1},
@@ -763,18 +800,9 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
         if self.n_task == 0:
             raise NotInitialized(self.__class__.__name__)
 
-        idx_to_task = [None] * self.n_task
-        task_to_idx = {}
-
-        for doc in self.task_mapping.find({}, {"_id": 1, "index": 1}):
-            idx = doc["index"]
-            task_id = doc["_id"]
-            idx_to_task[idx] = task_id
-            task_to_idx[task_id] = idx
-
         answers = np.full(self.n_task, "-1", dtype=object)
 
-        task_ids_list = list(task_to_idx.keys())
+        task_ids_list = list(self._global_task_to_idx.keys())
 
         for batch in chunked(task_ids_list, 5000):
             if self.output_unvalidated:
@@ -790,7 +818,7 @@ class PlantNetMongo(SparseMongoBatchAlgorithm):
 
             for doc in cursor:
                 task_id = doc["_id"]
-                idx = task_to_idx.get(task_id)
+                idx = self._global_task_to_idx.get(task_id)
                 if idx is None:
                     continue
 
